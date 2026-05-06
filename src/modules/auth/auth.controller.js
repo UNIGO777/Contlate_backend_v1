@@ -31,6 +31,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
   const result = await authService.verifyEmail({
     email: req.validated.email,
     code: req.validated.code,
+    device: deviceFromReq(req),
   });
   return res.status(200).json(new ApiResponse(200, result, "Email verified."));
 });

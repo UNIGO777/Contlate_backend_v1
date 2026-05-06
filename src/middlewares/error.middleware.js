@@ -29,11 +29,25 @@ const errorMiddleware = (error, req, res, _next) => {
     normalized = new ApiError(error.statusCode || 500, error.message || "Internal server error");
   }
 
+  const userId = req.user?._id?.toString() ?? req.user?.id ?? null;
+  const requestMeta = {
+    method: req.method,
+    path: req.originalUrl,
+    ...(userId ? { userId } : {}),
+  };
+
   if (normalized.statusCode >= 500) {
     logger.error(normalized.message, {
+      ...requestMeta,
+      code: normalized.code,
       stack: normalized.stack,
-      path: req.originalUrl,
-      method: req.method,
+    });
+  } else if (normalized.statusCode >= 400) {
+    logger.warn(normalized.message, {
+      ...requestMeta,
+      code: normalized.code,
+      status: normalized.statusCode,
+      ...(normalized.details ? { details: normalized.details } : {}),
     });
   }
 

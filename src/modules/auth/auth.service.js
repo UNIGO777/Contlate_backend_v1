@@ -1,11 +1,13 @@
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const env = require("../../config/env");
 const ApiError = require("../../core/ApiError");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const { OTP_PURPOSES } = require("../../constants/otpPurposes");
 const User = require("../user/user.model");
+const EmailOtp = require("./emailOtp.model");
 const otpService = require("./otp.service");
 const mailService = require("../../services/mail.service");
 
@@ -83,7 +85,8 @@ const buildSession = async (user, device) => {
   };
 };
 
-const registerUser = async ({ name, email, password }, { device } = {}) => {
+const registerUser = async ({ name, email, password }) => {
+  // Reject if a verified account already exists.
   const existing = await User.findOne({ email });
   if (existing) {
     throw new ApiError(409, "A user with this email already exists.", {
@@ -92,22 +95,26 @@ const registerUser = async ({ name, email, password }, { device } = {}) => {
   }
 
   const passwordHash = await bcrypt.hash(password, env.bcryptSaltRounds);
-  const user = await User.create({ name, email, passwordHash });
+
+  // Use a pre-generated ObjectId as a placeholder — the real User document
+  // is only created inside verifyEmail once the OTP is confirmed.
+  const pendingId = new mongoose.Types.ObjectId();
 
   const { code } = await otpService.issueOtp({
-    userId: user._id,
-    email: user.email,
+    userId: pendingId,
+    email,
     purpose: OTP_PURPOSES.VERIFY_EMAIL,
+    meta: { name, passwordHash },
   });
 
   await mailService.send({
-    to: user.email,
+    to: email,
     subject: "Verify your email",
     template: "verify_email",
-    data: { name: user.name, code },
+    data: { name, code },
   });
 
-  return buildSession(user, device);
+  return { email };
 };
 
 const loginUser = async ({ email, password }, { device } = {}) => {
@@ -123,6 +130,12 @@ const loginUser = async ({ email, password }, { device } = {}) => {
     throw new ApiError(423, "Account temporarily locked. Try again later.", {
       code: ERROR_CODES.AUTH_ACCOUNT_LOCKED,
       details: { lockedUntil: user.lockedUntil },
+    });
+  }
+
+  if (!user.isEmailVerified) {
+    throw new ApiError(403, "Please verify your email before signing in.", {
+      code: ERROR_CODES.AUTH_EMAIL_NOT_VERIFIED,
     });
   }
 
@@ -156,9 +169,36 @@ const getCurrentUser = async (userId) => {
 };
 
 const sendOtp = async ({ email, purpose }) => {
+  const templateByPurpose = {
+    [OTP_PURPOSES.VERIFY_EMAIL]: "verify_email",
+    [OTP_PURPOSES.RESET_PASSWORD]: "password_reset",
+    [OTP_PURPOSES.CHANGE_EMAIL]: "verify_email",
+  };
+
   const user = await User.findOne({ email });
-  // Do not leak whether email exists.
+
   if (!user || user.deletedAt) {
+    // For VERIFY_EMAIL resends, the User document may not exist yet (pending
+    // registration). Look for an active OTP and re-issue under the same
+    // pending userId so verifyEmail can still complete the registration.
+    if (purpose === OTP_PURPOSES.VERIFY_EMAIL) {
+      const pendingOtp = await EmailOtp.findOne({ email, purpose, consumedAt: null }).sort({ createdAt: -1 });
+      if (pendingOtp) {
+        const { code } = await otpService.issueOtp({
+          userId: pendingOtp.userId,
+          email,
+          purpose,
+          meta: pendingOtp.meta,
+        });
+        await mailService.send({
+          to: email,
+          subject: "Your verification code",
+          template: "verify_email",
+          data: { name: pendingOtp.meta?.name ?? "there", code },
+        });
+      }
+    }
+    // Do not leak whether the email exists.
     return { sent: true };
   }
 
@@ -167,12 +207,6 @@ const sendOtp = async ({ email, purpose }) => {
     email: user.email,
     purpose,
   });
-
-  const templateByPurpose = {
-    [OTP_PURPOSES.VERIFY_EMAIL]: "verify_email",
-    [OTP_PURPOSES.RESET_PASSWORD]: "password_reset",
-    [OTP_PURPOSES.CHANGE_EMAIL]: "verify_email",
-  };
 
   await mailService.send({
     to: user.email,
@@ -184,22 +218,45 @@ const sendOtp = async ({ email, purpose }) => {
   return { sent: true };
 };
 
-const verifyEmail = async ({ email, code }) => {
-  const user = await User.findOne({ email });
-  if (!user || user.deletedAt) {
-    throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
+const verifyEmail = async ({ email, code, device }) => {
+  // Find the pending OTP by email so we can get the placeholder userId and
+  // the registration meta (name, passwordHash) stored at registration time.
+  const pendingOtp = await EmailOtp.findOne({
+    email,
+    purpose: OTP_PURPOSES.VERIFY_EMAIL,
+    consumedAt: null,
+  }).sort({ createdAt: -1 });
+
+  if (!pendingOtp) {
+    throw new ApiError(400, "Invalid or expired verification code.", {
+      code: ERROR_CODES.OTP_INVALID,
+    });
   }
 
+  // Validate the code (this also marks the OTP as consumed).
   await otpService.verifyOtp({
-    userId: user._id,
+    userId: pendingOtp.userId,
     purpose: OTP_PURPOSES.VERIFY_EMAIL,
     code,
   });
 
-  user.isEmailVerified = true;
-  await user.save();
+  // Guard against a race condition where two requests slip through.
+  const existing = await User.findOne({ email });
+  if (existing) {
+    return buildSession(existing, device);
+  }
 
-  return { user: sanitizeUser(user) };
+  // Create the User document now — only after OTP is confirmed.
+  const { name, passwordHash } = pendingOtp.meta;
+  const user = await User.create({
+    _id: pendingOtp.userId,
+    name,
+    email,
+    passwordHash,
+    isEmailVerified: true,
+  });
+
+  return buildSession(user, device);
 };
 
 const forgotPassword = async ({ email }) => {

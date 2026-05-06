@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
-const morgan = require("morgan");
+const requestLogger = require("./middlewares/requestLogger.middleware");
 const env = require("./config/env");
 const ApiError = require("./core/ApiError");
 const { ERROR_CODES } = require("./constants/errorCodes");
@@ -22,7 +22,7 @@ app.use(
   })
 );
 app.use(helmet());
-app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
+app.use(requestLogger);
 // Local storage ingest/serve routes (bypass JSON parser; bound to raw body per-route).
 app.use("/static", staticRoutes);
 // Webhooks must read the raw body for signature verification — mount before JSON parser.
