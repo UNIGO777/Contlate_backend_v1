@@ -69,15 +69,32 @@ const validateForgotPasswordInput = (req) => {
   return finalize(details, { email: email ? normalizeEmail(email) : email });
 };
 
-const validateResetPasswordInput = (req) => {
-  const { email, code, newPassword } = req.body || {};
+const validateVerifyResetCodeInput = (req) => {
+  const { email, code } = req.body || {};
   const details = [];
   validateEmail(email, details);
   if (!isNonEmptyString(code)) details.push("code is required.");
-  validatePassword(newPassword, details, "newPassword");
   return finalize(details, {
     email: email ? normalizeEmail(email) : email,
     code: code ? String(code).trim() : code,
+  });
+};
+
+// Two-step reset: first /password/verify-code returns a resetToken,
+// then /password/reset uses that token. Legacy `code` field still
+// accepted for backwards-compat — one of the two must be present.
+const validateResetPasswordInput = (req) => {
+  const { email, code, resetToken, newPassword } = req.body || {};
+  const details = [];
+  validateEmail(email, details);
+  if (!isNonEmptyString(code) && !isNonEmptyString(resetToken)) {
+    details.push("resetToken or code is required.");
+  }
+  validatePassword(newPassword, details, "newPassword");
+  return finalize(details, {
+    email: email ? normalizeEmail(email) : email,
+    code: code ? String(code).trim() : undefined,
+    resetToken: resetToken ? String(resetToken).trim() : undefined,
     newPassword,
   });
 };
@@ -100,6 +117,7 @@ module.exports = {
   validateOtpSendInput,
   validateOtpVerifyInput,
   validateForgotPasswordInput,
+  validateVerifyResetCodeInput,
   validateResetPasswordInput,
   validateRefreshInput,
   validateLogoutInput,

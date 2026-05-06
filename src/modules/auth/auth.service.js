@@ -206,10 +206,14 @@ const forgotPassword = async ({ email }) => {
   return sendOtp({ email, purpose: OTP_PURPOSES.RESET_PASSWORD });
 };
 
-const resetPassword = async ({ email, code, newPassword }) => {
+// Step 2 of forgot-password: validate the OTP up-front so the user gets
+// instant feedback. Consumes the OTP and returns a short-lived reset
+// token (10 min) that the next step uses to set a new password.
+const verifyResetCode = async ({ email, code }) => {
   const user = await User.findOne({ email });
+  // Constant-time-ish: don't leak whether email exists; treat as invalid OTP.
   if (!user || user.deletedAt) {
-    throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
+    throw new ApiError(400, "Invalid or expired code.", { code: ERROR_CODES.OTP_INVALID });
   }
 
   await otpService.verifyOtp({
@@ -217,6 +221,51 @@ const resetPassword = async ({ email, code, newPassword }) => {
     purpose: OTP_PURPOSES.RESET_PASSWORD,
     code,
   });
+
+  const resetToken = jwt.sign(
+    { id: user._id.toString(), purpose: "reset_password" },
+    env.jwtSecret,
+    { expiresIn: "10m" }
+  );
+
+  return { resetToken };
+};
+
+const resetPassword = async ({ email, code, resetToken, newPassword }) => {
+  let user;
+
+  if (resetToken) {
+    // Two-step flow: token issued by /password/verify-code
+    let payload;
+    try {
+      payload = jwt.verify(resetToken, env.jwtSecret);
+    } catch {
+      throw new ApiError(401, "Reset session expired. Request a new code.", {
+        code: ERROR_CODES.AUTH_TOKEN_INVALID,
+      });
+    }
+    if (payload.purpose !== "reset_password") {
+      throw new ApiError(401, "Invalid reset token.", { code: ERROR_CODES.AUTH_TOKEN_INVALID });
+    }
+    user = await User.findById(payload.id);
+    if (!user || user.deletedAt) {
+      throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
+    }
+    if (email && user.email !== email) {
+      throw new ApiError(400, "Email mismatch.", { code: ERROR_CODES.OTP_INVALID });
+    }
+  } else {
+    // Legacy single-step flow: { email, code } verified inline.
+    user = await User.findOne({ email });
+    if (!user || user.deletedAt) {
+      throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
+    }
+    await otpService.verifyOtp({
+      userId: user._id,
+      purpose: OTP_PURPOSES.RESET_PASSWORD,
+      code,
+    });
+  }
 
   user.passwordHash = await bcrypt.hash(newPassword, env.bcryptSaltRounds);
   user.refreshTokens = [];
@@ -281,6 +330,7 @@ module.exports = {
   sendOtp,
   verifyEmail,
   forgotPassword,
+  verifyResetCode,
   resetPassword,
   refreshSession,
   logout,

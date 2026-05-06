@@ -40,6 +40,11 @@ const forgotPassword = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, result, "If the account exists, a reset code has been sent."));
 });
 
+const verifyResetCode = asyncHandler(async (req, res) => {
+  const result = await authService.verifyResetCode(req.validated);
+  return res.status(200).json(new ApiResponse(200, result, "Code verified."));
+});
+
 const resetPassword = asyncHandler(async (req, res) => {
   const result = await authService.resetPassword(req.validated);
   return res.status(200).json(new ApiResponse(200, result, "Password reset successfully."));
@@ -68,6 +73,7 @@ module.exports = {
   sendOtp,
   verifyOtp,
   forgotPassword,
+  verifyResetCode,
   resetPassword,
   refresh,
   logout,

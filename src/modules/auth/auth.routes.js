@@ -12,6 +12,7 @@ const {
   validateOtpSendInput,
   validateOtpVerifyInput,
   validateForgotPasswordInput,
+  validateVerifyResetCodeInput,
   validateResetPasswordInput,
   validateRefreshInput,
   validateLogoutInput,
@@ -51,6 +52,12 @@ router.post(
   otpRateLimiter,
   validateMiddleware(validateForgotPasswordInput),
   authController.forgotPassword
+);
+router.post(
+  "/password/verify-code",
+  authRateLimiter,
+  validateMiddleware(validateVerifyResetCodeInput),
+  authController.verifyResetCode
 );
 router.post(
   "/password/reset",
