@@ -54,6 +54,12 @@ router.post(
   authController.forgotPassword
 );
 router.post(
+  "/forgot-password",
+  otpRateLimiter,
+  validateMiddleware(validateForgotPasswordInput),
+  authController.forgotPassword
+);
+router.post(
   "/password/verify-code",
   authRateLimiter,
   validateMiddleware(validateVerifyResetCodeInput),
@@ -61,6 +67,12 @@ router.post(
 );
 router.post(
   "/password/reset",
+  authRateLimiter,
+  validateMiddleware(validateResetPasswordInput),
+  authController.resetPassword
+);
+router.post(
+  "/reset-password",
   authRateLimiter,
   validateMiddleware(validateResetPasswordInput),
   authController.resetPassword

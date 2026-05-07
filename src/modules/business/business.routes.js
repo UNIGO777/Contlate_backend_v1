@@ -6,9 +6,40 @@ const {
   validateUpdateBusiness,
   validateBrandAssets,
   validateGenerateDescription,
+  validateSetupStart,
+  validateSetupAddress,
+  validateSetupPlacesMatch,
+  validateSetupPlaceSelect,
+  validateSetupComplete,
 } = require("./business.validation");
 
 const router = express.Router();
+
+router.post(
+  "/setup/start",
+  validateMiddleware(validateSetupStart),
+  businessController.startSetup
+);
+router.patch(
+  "/setup/address",
+  validateMiddleware(validateSetupAddress),
+  businessController.saveSetupAddress
+);
+router.post(
+  "/setup/places/match",
+  validateMiddleware(validateSetupPlacesMatch),
+  businessController.matchSetupPlaces
+);
+router.post(
+  "/setup/places/select",
+  validateMiddleware(validateSetupPlaceSelect),
+  businessController.selectSetupPlace
+);
+router.post(
+  "/setup/complete",
+  validateMiddleware(validateSetupComplete),
+  businessController.completeSetup
+);
 
 router.post("/", validateMiddleware(validateCreateBusiness), businessController.createBusiness);
 router.get("/me", businessController.getMyBusiness);

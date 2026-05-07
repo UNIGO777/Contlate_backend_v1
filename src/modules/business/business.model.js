@@ -16,10 +16,14 @@ const businessSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
     subcategories: {
+      type: [String],
+      default: [],
+    },
+    services: {
       type: [String],
       default: [],
     },
@@ -36,8 +40,17 @@ const businessSchema = new mongoose.Schema(
     },
     address: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
+    },
+    addressDetails: {
+      line1: { type: String, trim: true, default: "" },
+      line2: { type: String, trim: true, default: "" },
+      landmark: { type: String, trim: true, default: "" },
+      city: { type: String, trim: true, default: "" },
+      state: { type: String, trim: true, default: "" },
+      country: { type: String, trim: true, default: "" },
+      pincode: { type: String, trim: true, default: "" },
     },
     brandAssets: {
       logoUrl: {
@@ -60,8 +73,8 @@ const businessSchema = new mongoose.Schema(
     },
     timezone: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
     isCompleted: {
       type: Boolean,
@@ -79,6 +92,7 @@ const businessSchema = new mongoose.Schema(
     },
     google: {
       placeId: { type: String, trim: true, default: "" },
+      displayName: { type: String, trim: true, default: "" },
       formattedAddress: { type: String, trim: true, default: "" },
       website: { type: String, trim: true, default: "" },
       internationalPhoneNumber: { type: String, trim: true, default: "" },
@@ -87,6 +101,9 @@ const businessSchema = new mongoose.Schema(
       googleMapsUri: { type: String, trim: true, default: "" },
       businessStatus: { type: String, trim: true, default: "" },
       types: { type: [String], default: [] },
+      primaryType: { type: String, trim: true, default: "" },
+      primaryTypeDisplayName: { type: String, trim: true, default: "" },
+      editorialSummary: { type: String, trim: true, default: "" },
       regularOpeningHours: { type: mongoose.Schema.Types.Mixed, default: null },
       location: {
         lat: { type: Number, default: null },

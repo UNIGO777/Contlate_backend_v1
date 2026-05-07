@@ -11,6 +11,16 @@ const EmailOtp = require("./emailOtp.model");
 const otpService = require("./otp.service");
 const mailService = require("../../services/mail.service");
 
+const sendAuthMail = async (payload) => {
+  const result = await mailService.send(payload);
+  if (env.mail.driver === "smtp" && !result.delivered) {
+    throw new ApiError(502, "Could not send email. Please try again shortly.", {
+      details: { reason: result.error || "SMTP delivery failed." },
+    });
+  }
+  return result;
+};
+
 const sanitizeUser = (user) => ({
   id: user._id.toString(),
   name: user.name,
@@ -107,7 +117,7 @@ const registerUser = async ({ name, email, password }) => {
     meta: { name, passwordHash },
   });
 
-  await mailService.send({
+  await sendAuthMail({
     to: email,
     subject: "Verify your email",
     template: "verify_email",
@@ -190,7 +200,7 @@ const sendOtp = async ({ email, purpose }) => {
           purpose,
           meta: pendingOtp.meta,
         });
-        await mailService.send({
+        await sendAuthMail({
           to: email,
           subject: "Your verification code",
           template: "verify_email",
@@ -208,7 +218,7 @@ const sendOtp = async ({ email, purpose }) => {
     purpose,
   });
 
-  await mailService.send({
+  await sendAuthMail({
     to: user.email,
     subject: "Your verification code",
     template: templateByPurpose[purpose] || "verify_email",
@@ -260,6 +270,13 @@ const verifyEmail = async ({ email, code, device }) => {
 };
 
 const forgotPassword = async ({ email }) => {
+  const user = await User.findOne({ email });
+  if (!user || user.deletedAt) {
+    throw new ApiError(404, "No account found with this email address.", {
+      code: ERROR_CODES.AUTH_USER_NOT_FOUND,
+    });
+  }
+
   return sendOtp({ email, purpose: OTP_PURPOSES.RESET_PASSWORD });
 };
 

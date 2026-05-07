@@ -41,6 +41,132 @@ const buildUserPrompt = (input) => {
   return lines.join("\n");
 };
 
+const BUSINESS_PROFILE_SYSTEM_PROMPT = `You classify local business profiles for Postly.
+Return concise JSON only. No markdown. No explanations.
+
+JSON shape:
+{
+  "category": "one broad business category",
+  "subcategories": ["4 to 10 short positioning tags"],
+  "services": ["3 to 12 concrete services/products customers can buy or request"],
+  "description": "2 to 4 customer-facing sentences"
+}
+
+Rules:
+- Prefer a clear category like Restaurant, Cafe, Salon, Gym, Clinic, Retail Store, Coaching, Real Estate, or Professional Services when appropriate.
+- Use Google place types, primary type, editorial summary, website, rating, address, phone, and opening hours as evidence.
+- Services must be concrete offerings, not generic traits. Examples: Home Delivery, Haircut, Property Consultation, Lab Tests.
+- Keep every category, subcategory, and service under 32 characters.
+- Do not invent sensitive claims, prices, guarantees, awards, or exact opening hours unless explicitly provided.`;
+
+const compactGooglePlace = (googlePlace = {}) => ({
+  name: googlePlace.displayName || googlePlace.name || "",
+  formattedAddress: googlePlace.formattedAddress || "",
+  website: googlePlace.website || "",
+  internationalPhoneNumber: googlePlace.internationalPhoneNumber || "",
+  rating: googlePlace.rating ?? null,
+  userRatingCount: googlePlace.userRatingCount ?? null,
+  googleMapsUri: googlePlace.googleMapsUri || "",
+  businessStatus: googlePlace.businessStatus || "",
+  types: Array.isArray(googlePlace.types) ? googlePlace.types : [],
+  primaryType: googlePlace.primaryType || "",
+  primaryTypeDisplayName: googlePlace.primaryTypeDisplayName || "",
+  editorialSummary: googlePlace.editorialSummary || "",
+  regularOpeningHours: googlePlace.regularOpeningHours || null,
+  location: googlePlace.location || null,
+});
+
+const stripCodeFence = (text = "") =>
+  text
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+const safeJsonParse = (text = "") => {
+  const clean = stripCodeFence(text);
+  try {
+    return JSON.parse(clean);
+  } catch {
+    const start = clean.indexOf("{");
+    const end = clean.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
+    throw new Error("OpenAI returned invalid JSON.");
+  }
+};
+
+const cleanList = (value, max) =>
+  (Array.isArray(value) ? value : [])
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .filter((item, index, arr) => arr.indexOf(item) === index)
+    .slice(0, max);
+
+const normalizeBusinessProfileSuggestions = (raw = {}) => ({
+  category: typeof raw.category === "string" ? raw.category.trim().slice(0, 60) : "",
+  subcategories: cleanList(raw.subcategories, 10),
+  services: cleanList(raw.services, 12),
+  description:
+    typeof raw.description === "string" ? raw.description.trim().slice(0, 1500) : "",
+  source: "openai",
+});
+
+const buildBusinessProfilePrompt = (input = {}) =>
+  JSON.stringify(
+    {
+      businessName: input.businessName || "",
+      phone: input.phone || "",
+      address: input.address || "",
+      addressDetails: input.addressDetails || {},
+      currentCategory: input.category || "",
+      currentSubcategories: input.subcategories || [],
+      currentServices: input.services || [],
+      currentDescription: input.description || "",
+      googlePlace: input.googlePlace ? compactGooglePlace(input.googlePlace) : null,
+    },
+    null,
+    2
+  );
+
+const generateBusinessProfileSuggestions = async (input = {}) => {
+  if (!isConfigured()) throw new Error("OpenAI is not configured (OPENAI_API_KEY missing).");
+
+  const body = {
+    model: env.openai.model,
+    messages: [
+      { role: "system", content: BUSINESS_PROFILE_SYSTEM_PROMPT },
+      { role: "user", content: buildBusinessProfilePrompt(input) },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.25,
+    max_tokens: 520,
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.openai.apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    logger.warn("[openai] profile-suggestions request failed", {
+      status: res.status,
+      body: errText.slice(0, 400),
+    });
+    throw new Error(`OpenAI request failed (${res.status})`);
+  }
+
+  const json = await res.json();
+  const text = json.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("OpenAI returned an empty response.");
+
+  return normalizeBusinessProfileSuggestions(safeJsonParse(text));
+};
+
 const generateBrandStory = async (input = {}) => {
   if (!isConfigured()) throw new Error("OpenAI is not configured (OPENAI_API_KEY missing).");
 
@@ -82,4 +208,5 @@ const generateBrandStory = async (input = {}) => {
 module.exports = {
   isConfigured,
   generateBrandStory,
+  generateBusinessProfileSuggestions,
 };

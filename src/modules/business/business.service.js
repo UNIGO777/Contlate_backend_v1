@@ -10,15 +10,220 @@ const REQUIRED_FIELDS = ["businessName", "category", "phone", "address", "timezo
 const deriveIsCompleted = (business) =>
   REQUIRED_FIELDS.every((f) => typeof business[f] === "string" && business[f].trim().length > 0);
 
+const formatAddress = (addressDetails = {}) =>
+  [
+    addressDetails.line1,
+    addressDetails.line2,
+    addressDetails.landmark,
+    addressDetails.city,
+    addressDetails.state,
+    addressDetails.country,
+  ]
+    .filter((part) => typeof part === "string" && part.trim())
+    .map((part) => part.trim())
+    .join(", ") +
+  (addressDetails.pincode ? ` - ${addressDetails.pincode}` : "");
+
+const digitsOnly = (value = "") => String(value).replace(/\D/g, "");
+
+const phoneMatches = (a, b) => {
+  const left = digitsOnly(a);
+  const right = digitsOnly(b);
+  if (!left || !right) return false;
+  return left.endsWith(right.slice(-10)) || right.endsWith(left.slice(-10));
+};
+
+const humanizePlaceType = (type = "") =>
+  String(type)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+
+const categoryFromGoogleTypes = (types = [], primaryType = "") => {
+  const set = new Set([primaryType, ...types].filter(Boolean));
+  const has = (...items) => items.some((item) => set.has(item));
+
+  if (has("restaurant", "meal_takeaway", "meal_delivery", "indian_restaurant", "fast_food_restaurant")) {
+    return "Restaurant";
+  }
+  if (has("cafe", "coffee_shop", "bakery")) return "Cafe";
+  if (has("beauty_salon", "hair_care", "spa", "nail_salon")) return "Salon";
+  if (has("gym", "fitness_center", "yoga_studio")) return "Gym";
+  if (has("doctor", "dentist", "hospital", "physiotherapist", "pharmacy", "medical_lab", "clinic")) {
+    return "Clinic";
+  }
+  if (has("store", "clothing_store", "shoe_store", "jewelry_store", "electronics_store", "furniture_store", "home_goods_store", "supermarket", "grocery_store", "convenience_store")) {
+    return "Retail Store";
+  }
+  if (has("school", "university", "preschool", "primary_school", "secondary_school")) {
+    return "Coaching";
+  }
+  if (has("real_estate_agency")) return "Real Estate";
+  if (has("lawyer", "accounting", "insurance_agency", "travel_agency", "consultant")) {
+    return "Professional Services";
+  }
+
+  return humanizePlaceType(primaryType || types[0] || "");
+};
+
+const servicesFromGoogleTypes = (types = [], primaryType = "") => {
+  const set = new Set([primaryType, ...types].filter(Boolean));
+  const has = (...items) => items.some((item) => set.has(item));
+  const services = [];
+
+  if (has("restaurant", "meal_takeaway", "meal_delivery", "indian_restaurant", "fast_food_restaurant")) {
+    services.push("Dine-in", "Takeaway", "Home Delivery");
+  }
+  if (has("cafe", "coffee_shop")) services.push("Coffee Service", "Snacks", "Takeaway");
+  if (has("bakery")) services.push("Fresh Bakery", "Custom Cakes", "Takeaway");
+  if (has("beauty_salon", "hair_care")) services.push("Haircut", "Hair Styling", "Hair Color");
+  if (has("spa")) services.push("Massage", "Facial", "Body Spa");
+  if (has("nail_salon")) services.push("Manicure", "Pedicure", "Nail Art");
+  if (has("gym", "fitness_center")) services.push("Personal Training", "Group Classes", "Fitness Plans");
+  if (has("yoga_studio")) services.push("Yoga Sessions", "Meditation", "Group Classes");
+  if (has("doctor", "clinic", "hospital")) services.push("Consultation", "Follow-up Visit", "Health Checkup");
+  if (has("dentist")) services.push("Dental Consultation", "Cleaning", "Dental Treatment");
+  if (has("medical_lab")) services.push("Lab Tests", "Sample Collection", "Reports");
+  if (has("pharmacy")) services.push("Medicines", "Prescription Support", "Health Products");
+  if (has("store", "clothing_store", "shoe_store", "jewelry_store", "electronics_store", "furniture_store", "home_goods_store", "supermarket", "grocery_store", "convenience_store")) {
+    services.push("In-store Shopping", "Product Consultation", "Home Delivery");
+  }
+  if (has("school", "university", "preschool", "primary_school", "secondary_school")) {
+    services.push("Admissions", "Classes", "Student Support");
+  }
+  if (has("real_estate_agency")) services.push("Property Consultation", "Site Visit", "Documentation");
+  if (has("lawyer")) services.push("Legal Consultation", "Documentation", "Case Support");
+  if (has("accounting")) services.push("Accounting", "Tax Filing", "Bookkeeping");
+  if (has("travel_agency")) services.push("Trip Planning", "Ticket Booking", "Travel Packages");
+
+  return services.filter((value, index, arr) => arr.indexOf(value) === index).slice(0, 12);
+};
+
+const profileSuggestionsFromGoogle = (business) => {
+  const google = business.google || {};
+  const types = Array.isArray(google.types) ? google.types : [];
+  const ignored = new Set([
+    "point_of_interest",
+    "establishment",
+    "food",
+    "store",
+    "health",
+    "general_contractor",
+  ]);
+  const subcategories = [
+    google.primaryTypeDisplayName,
+    ...types.filter((type) => !ignored.has(type)).map(humanizePlaceType),
+  ]
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+    .slice(0, 10);
+
+  const category = categoryFromGoogleTypes(types, google.primaryType);
+  const services = servicesFromGoogleTypes(types, google.primaryType);
+  const typeLabel = category || subcategories[0] || "business";
+  const hours = google.regularOpeningHours?.weekdayDescriptions?.[0] || "";
+  const website = google.website ? ` Visit us at ${google.website}.` : "";
+  const phoneLine = google.internationalPhoneNumber
+    ? ` Reach us at ${google.internationalPhoneNumber}.`
+    : "";
+  const description =
+    google.editorialSummary ||
+    `${business.businessName || "Our business"} is a trusted ${typeLabel.toLowerCase()} located at ${google.formattedAddress || business.address}.` +
+      (hours ? ` ${hours}.` : "") +
+      website +
+      phoneLine;
+
+  return {
+    category,
+    subcategories,
+    services,
+    description: description.trim().slice(0, 1500),
+    source: google.editorialSummary ? "google-editorial-summary" : "google-place-template",
+  };
+};
+
+const googlePlaceForAi = (business) => {
+  const google = business.google || {};
+  return {
+    displayName: google.displayName || business.businessName || "",
+    formattedAddress: google.formattedAddress || business.address || "",
+    website: google.website || "",
+    internationalPhoneNumber: google.internationalPhoneNumber || business.phone || "",
+    rating: google.rating,
+    userRatingCount: google.userRatingCount,
+    googleMapsUri: google.googleMapsUri || "",
+    businessStatus: google.businessStatus || "",
+    types: google.types || [],
+    primaryType: google.primaryType || "",
+    primaryTypeDisplayName: google.primaryTypeDisplayName || "",
+    editorialSummary: google.editorialSummary || "",
+    regularOpeningHours: google.regularOpeningHours || null,
+    location: google.location || { lat: null, lng: null },
+  };
+};
+
+const profileSuggestionsForBusiness = async (business) => {
+  const fallback = profileSuggestionsFromGoogle(business);
+  if (!openaiService.isConfigured()) {
+    return { ...fallback, aiStatus: "not_configured" };
+  }
+
+  try {
+    logger.info("[business] generating profile suggestions with OpenAI", {
+      businessId: business._id?.toString(),
+      placeId: business.google?.placeId || "",
+    });
+    const ai = await openaiService.generateBusinessProfileSuggestions({
+      businessName: business.businessName,
+      phone: business.phone,
+      address: business.address,
+      addressDetails: business.addressDetails,
+      category: business.category,
+      subcategories: business.subcategories || [],
+      services: business.services || [],
+      description: business.description || "",
+      googlePlace: googlePlaceForAi(business),
+    });
+
+    return {
+      category: ai.category || fallback.category,
+      subcategories: ai.subcategories?.length ? ai.subcategories : fallback.subcategories,
+      services: ai.services?.length ? ai.services : fallback.services,
+      description: ai.description || fallback.description,
+      source: "openai",
+      aiStatus: "generated",
+    };
+  } catch (err) {
+    logger.warn("[business] OpenAI profile suggestions failed; falling back", {
+      message: err.message,
+    });
+    return {
+      ...fallback,
+      aiStatus: "fallback",
+      aiError: err.message?.slice(0, 180) || "OpenAI generation failed.",
+    };
+  }
+};
+
 const sanitizeBusiness = (business) => ({
   id: business._id.toString(),
   userId: business.userId.toString(),
   businessName: business.businessName,
   category: business.category,
   subcategories: business.subcategories || [],
+  services: business.services || [],
   description: business.description || "",
   phone: business.phone,
   address: business.address,
+  addressDetails: {
+    line1:    business.addressDetails?.line1 || "",
+    line2:    business.addressDetails?.line2 || "",
+    landmark: business.addressDetails?.landmark || "",
+    city:     business.addressDetails?.city || "",
+    state:    business.addressDetails?.state || "",
+    country:  business.addressDetails?.country || "",
+    pincode:  business.addressDetails?.pincode || "",
+  },
   brandAssets: {
     logoUrl:       business.brandAssets?.logoUrl || "",
     primaryColor:  business.brandAssets?.primaryColor || "",
@@ -38,6 +243,7 @@ const sanitizeBusiness = (business) => ({
   google: business.google
     ? {
         placeId:                  business.google.placeId || "",
+        displayName:              business.google.displayName || "",
         formattedAddress:         business.google.formattedAddress || "",
         website:                  business.google.website || "",
         internationalPhoneNumber: business.google.internationalPhoneNumber || "",
@@ -46,6 +252,9 @@ const sanitizeBusiness = (business) => ({
         googleMapsUri:            business.google.googleMapsUri || "",
         businessStatus:           business.google.businessStatus || "",
         types:                    business.google.types || [],
+        primaryType:               business.google.primaryType || "",
+        primaryTypeDisplayName:    business.google.primaryTypeDisplayName || "",
+        editorialSummary:          business.google.editorialSummary || "",
         regularOpeningHours:      business.google.regularOpeningHours || null,
         location:                 business.google.location || { lat: null, lng: null },
         fetchedAt:                business.google.fetchedAt,
@@ -77,6 +286,7 @@ const enrichWithGooglePlaces = async (business, { placeId } = {}) => {
     }
     business.google = {
       placeId:                  place.placeId,
+      displayName:               place.displayName,
       formattedAddress:         place.formattedAddress,
       website:                  place.website,
       internationalPhoneNumber: place.internationalPhoneNumber,
@@ -85,6 +295,9 @@ const enrichWithGooglePlaces = async (business, { placeId } = {}) => {
       googleMapsUri:            place.googleMapsUri,
       businessStatus:           place.businessStatus,
       types:                    place.types,
+      primaryType:               place.primaryType,
+      primaryTypeDisplayName:    place.primaryTypeDisplayName,
+      editorialSummary:          place.editorialSummary,
       regularOpeningHours:      place.regularOpeningHours,
       location:                 place.location,
       fetchedAt:                new Date(),
@@ -129,6 +342,147 @@ const createBusiness = async (userId, payload) => {
   return sanitizeBusiness(business);
 };
 
+const startSetup = async (userId, { businessName, phone }) => {
+  let business = await Business.findOne({ userId });
+  if (!business) {
+    business = await Business.create({
+      userId,
+      businessName,
+      phone,
+      category: "",
+      address: "",
+      timezone: "",
+      isCompleted: false,
+    });
+  } else {
+    business.businessName = businessName;
+    business.phone = phone;
+    business.isCompleted = deriveIsCompleted(business);
+    await business.save();
+  }
+  return sanitizeBusiness(business);
+};
+
+const saveSetupAddress = async (userId, { addressDetails, timezone }) => {
+  const business = await Business.findOne({ userId });
+  if (!business) {
+    throw new ApiError(404, "Business setup has not been started.", {
+      code: ERROR_CODES.BUSINESS_NOT_FOUND,
+    });
+  }
+
+  business.addressDetails = addressDetails;
+  business.address = formatAddress(addressDetails);
+  business.timezone = timezone;
+  business.isCompleted = deriveIsCompleted(business);
+  await business.save();
+  return sanitizeBusiness(business);
+};
+
+const matchSetupPlaces = async ({ businessName, phone, pincode, city, state, address }) => {
+  if (!placesService.isConfigured()) {
+    throw new ApiError(501, "Google Places is not configured on this server.");
+  }
+
+  const query = [businessName, phone, address, city, state, pincode]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const places = await placesService.searchMultiple(query, 5);
+  return places
+    .map((place) => {
+      const hasPhoneMatch = phoneMatches(phone, place.internationalPhoneNumber);
+      const hasPincodeMatch =
+        pincode && place.formattedAddress && place.formattedAddress.includes(pincode);
+      return {
+        placeId: place.placeId,
+        name: place.displayName || "",
+        formattedAddress: place.formattedAddress,
+        phone: place.internationalPhoneNumber,
+        website: place.website,
+        rating: place.rating,
+        userRatingCount: place.userRatingCount,
+        googleMapsUri: place.googleMapsUri,
+        matchReason: hasPhoneMatch
+          ? "name_phone"
+          : hasPincodeMatch
+          ? "name_pincode"
+          : "fallback",
+      };
+    })
+    .sort((a, b) => {
+      const rank = { name_phone: 0, name_pincode: 1, fallback: 2 };
+      return rank[a.matchReason] - rank[b.matchReason];
+    });
+};
+
+const selectSetupPlace = async (userId, { placeId }) => {
+  const business = await Business.findOne({ userId });
+  if (!business) {
+    throw new ApiError(404, "Business setup has not been started.", {
+      code: ERROR_CODES.BUSINESS_NOT_FOUND,
+    });
+  }
+  if (!placesService.isConfigured()) {
+    throw new ApiError(501, "Google Places is not configured on this server.");
+  }
+
+  await enrichWithGooglePlaces(business, { placeId });
+  business.isCompleted = deriveIsCompleted(business);
+  await business.save();
+  return {
+    business: sanitizeBusiness(business),
+    suggestions: await profileSuggestionsForBusiness(business),
+  };
+};
+
+const completeSetup = async (userId, payload) => {
+  const business = await Business.findOne({ userId });
+  if (!business) {
+    throw new ApiError(404, "Business setup has not been started.", {
+      code: ERROR_CODES.BUSINESS_NOT_FOUND,
+    });
+  }
+
+  business.category = payload.category;
+  business.subcategories = payload.subcategories || [];
+  business.services = payload.services || [];
+  business.description = payload.description || "";
+  if (payload.brandAssets) {
+    business.brandAssets = {
+      logoUrl: payload.brandAssets.logoUrl ?? business.brandAssets?.logoUrl ?? "",
+      primaryColor: payload.brandAssets.primaryColor ?? business.brandAssets?.primaryColor ?? "",
+      secondaryColor: payload.brandAssets.secondaryColor ?? business.brandAssets?.secondaryColor ?? "",
+      theme: payload.brandAssets.theme
+        ? {
+            name: payload.brandAssets.theme.name ?? "",
+            colors: payload.brandAssets.theme.colors ?? [],
+            vibe: payload.brandAssets.theme.vibe ?? "",
+          }
+        : business.brandAssets?.theme ?? { name: "", colors: [], vibe: "" },
+    };
+  }
+
+  const missing = [];
+  if (!business.businessName?.trim()) missing.push("businessName");
+  if (!business.phone?.trim()) missing.push("phone");
+  if (!business.address?.trim()) missing.push("address");
+  if (!business.addressDetails?.pincode?.trim()) missing.push("pincode");
+  if (!business.timezone?.trim()) missing.push("timezone");
+  if (!business.category?.trim()) missing.push("category");
+
+  if (missing.length) {
+    throw new ApiError(400, "Business setup is incomplete.", {
+      code: ERROR_CODES.BUSINESS_INCOMPLETE,
+      details: missing.map((field) => `${field} is required.`),
+    });
+  }
+
+  business.isCompleted = true;
+  await business.save();
+  return sanitizeBusiness(business);
+};
+
 const getBusinessByUserId = async (userId) => {
   const business = await Business.findOne({ userId });
   if (!business) {
@@ -150,7 +504,7 @@ const updateBusiness = async (userId, payload) => {
     (payload.businessName !== undefined && payload.businessName !== business.businessName) ||
     (payload.address !== undefined && payload.address !== business.address);
 
-  for (const f of [...REQUIRED_FIELDS, "subcategories", "description"]) {
+  for (const f of [...REQUIRED_FIELDS, "subcategories", "services", "description"]) {
     if (payload[f] !== undefined) business[f] = payload[f];
   }
   if (payload.brandAssets) {
@@ -317,6 +671,11 @@ module.exports = {
   updateBusiness,
   updateBrandAssets,
   refreshGoogle,
+  startSetup,
+  saveSetupAddress,
+  matchSetupPlaces,
+  selectSetupPlace,
+  completeSetup,
   searchPlaces,
   generateDescription,
   findBusinessDocumentByUserId,

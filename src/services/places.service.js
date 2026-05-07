@@ -15,6 +15,9 @@ const PLACE_FIELDS = [
   "userRatingCount",
   "businessStatus",
   "types",
+  "primaryType",
+  "primaryTypeDisplayName",
+  "editorialSummary",
   "regularOpeningHours",
   "location",
 ];
@@ -94,6 +97,9 @@ const normalize = (place) => {
     googleMapsUri: place.googleMapsUri || "",
     businessStatus: place.businessStatus || "",
     types: Array.isArray(place.types) ? place.types : [],
+    primaryType: place.primaryType || "",
+    primaryTypeDisplayName: place.primaryTypeDisplayName?.text || "",
+    editorialSummary: place.editorialSummary?.text || "",
     regularOpeningHours: place.regularOpeningHours || null,
     location: place.location
       ? { lat: place.location.latitude, lng: place.location.longitude }

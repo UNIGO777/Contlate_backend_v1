@@ -24,6 +24,31 @@ const updateBrandAssets = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, { business }, "Brand assets updated."));
 });
 
+const startSetup = asyncHandler(async (req, res) => {
+  const business = await businessService.startSetup(req.user.id, req.validated);
+  return res.status(200).json(new ApiResponse(200, { business }, "Business setup started."));
+});
+
+const saveSetupAddress = asyncHandler(async (req, res) => {
+  const business = await businessService.saveSetupAddress(req.user.id, req.validated);
+  return res.status(200).json(new ApiResponse(200, { business }, "Business address saved."));
+});
+
+const matchSetupPlaces = asyncHandler(async (req, res) => {
+  const results = await businessService.matchSetupPlaces(req.validated);
+  return res.status(200).json(new ApiResponse(200, { results }, "Business matches fetched."));
+});
+
+const selectSetupPlace = asyncHandler(async (req, res) => {
+  const result = await businessService.selectSetupPlace(req.user.id, req.validated);
+  return res.status(200).json(new ApiResponse(200, result, "Google business selected."));
+});
+
+const completeSetup = asyncHandler(async (req, res) => {
+  const business = await businessService.completeSetup(req.user.id, req.validated);
+  return res.status(200).json(new ApiResponse(200, { business }, "Business setup completed."));
+});
+
 const refreshGoogle = asyncHandler(async (req, res) => {
   const placeId =
     typeof req.body?.placeId === "string" ? req.body.placeId.trim() : undefined;
@@ -50,6 +75,11 @@ module.exports = {
   getMyBusiness,
   updateMyBusiness,
   updateBrandAssets,
+  startSetup,
+  saveSetupAddress,
+  matchSetupPlaces,
+  selectSetupPlace,
+  completeSetup,
   refreshGoogle,
   searchPlaces,
   generateDescription,
