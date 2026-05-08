@@ -33,6 +33,15 @@ const businessSchema = new mongoose.Schema(
       default: "",
       maxlength: 1500,
     },
+    contactEmail: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    hasContactEmail: {
+      type: Boolean,
+      default: false,
+    },
     phone: {
       type: String,
       required: true,

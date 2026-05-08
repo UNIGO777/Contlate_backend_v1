@@ -57,15 +57,22 @@ const normalizeAddressDetails = (addressDetails = {}) => ({
   pincode:  trimOrUndef(addressDetails.pincode) || "",
 });
 
+const isValidEmail = (v) =>
+  typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
 const validateSetupStart = (req) => {
   const body = req.body || {};
+  const hasContactEmail = body.hasContactEmail === true || body.hasContactEmail === "true";
   const value = {
     businessName: trimOrUndef(body.businessName),
     phone: trimOrUndef(body.phone),
+    hasContactEmail,
+    contactEmail: hasContactEmail ? (trimOrUndef(body.contactEmail) || "") : "",
   };
   const details = [];
   if (!isNonEmptyString(value.businessName)) details.push("businessName is required.");
   if (!isNonEmptyString(value.phone)) details.push("phone is required.");
+  if (hasContactEmail && !isValidEmail(value.contactEmail)) details.push("contactEmail must be a valid email address.");
   return details.length ? { error: "Validation failed.", details } : { value };
 };
 

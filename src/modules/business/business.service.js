@@ -209,6 +209,8 @@ const sanitizeBusiness = (business) => ({
   id: business._id.toString(),
   userId: business.userId.toString(),
   businessName: business.businessName,
+  contactEmail: business.contactEmail || "",
+  hasContactEmail: business.hasContactEmail ?? false,
   category: business.category,
   subcategories: business.subcategories || [],
   services: business.services || [],
@@ -342,13 +344,15 @@ const createBusiness = async (userId, payload) => {
   return sanitizeBusiness(business);
 };
 
-const startSetup = async (userId, { businessName, phone }) => {
+const startSetup = async (userId, { businessName, phone, contactEmail, hasContactEmail }) => {
   let business = await Business.findOne({ userId });
   if (!business) {
     business = await Business.create({
       userId,
       businessName,
       phone,
+      contactEmail: hasContactEmail ? (contactEmail || "") : "",
+      hasContactEmail: !!hasContactEmail,
       category: "",
       address: "",
       timezone: "",
@@ -357,6 +361,8 @@ const startSetup = async (userId, { businessName, phone }) => {
   } else {
     business.businessName = businessName;
     business.phone = phone;
+    business.hasContactEmail = !!hasContactEmail;
+    business.contactEmail = hasContactEmail ? (contactEmail || "") : "";
     business.isCompleted = deriveIsCompleted(business);
     await business.save();
   }
