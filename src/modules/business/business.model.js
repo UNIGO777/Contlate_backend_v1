@@ -80,6 +80,16 @@ const businessSchema = new mongoose.Schema(
         vibe: { type: String, trim: true, default: "" },
       },
     },
+    savedThemes: {
+      type: [
+        {
+          name: { type: String, trim: true, default: "" },
+          colors: { type: [String], default: [] },
+          vibe: { type: String, trim: true, default: "" },
+        },
+      ],
+      default: [],
+    },
     timezone: {
       type: String,
       trim: true,

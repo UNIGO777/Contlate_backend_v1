@@ -18,7 +18,7 @@ const normalizeTheme = (theme) => {
   if (!theme || typeof theme !== "object") return undefined;
   return {
     name:   typeof theme.name === "string" ? theme.name.trim() : "",
-    colors: Array.isArray(theme.colors) ? theme.colors.slice(0, 3).map(String) : [],
+    colors: Array.isArray(theme.colors) ? theme.colors.slice(0, 5).map(String) : [],
     vibe:   typeof theme.vibe === "string" ? theme.vibe.trim() : "",
   };
 };
@@ -158,8 +158,8 @@ const validateSetupComplete = (req) => {
       }
       if (body.brandAssets.theme !== undefined) {
         const t = normalizeTheme(body.brandAssets.theme);
-        if (t && t.colors.length > 0 && t.colors.length !== 3) {
-          details.push("brandAssets.theme.colors must contain exactly 3 hex values.");
+        if (t && t.colors.length > 0 && (t.colors.length < 3 || t.colors.length > 5)) {
+          details.push("brandAssets.theme.colors must contain 3 to 5 hex values.");
         } else if (t && t.colors.length === 3 && !t.colors.every(isValidHex)) {
           details.push("brandAssets.theme.colors must all be valid hex colour strings.");
         } else {
@@ -187,8 +187,8 @@ const validateCreateBusiness = (req) => {
   }
 
   if (payload.brandAssets?.theme?.colors?.length > 0) {
-    if (payload.brandAssets.theme.colors.length !== 3) {
-      details.push("brandAssets.theme.colors must contain exactly 3 hex values.");
+    if (payload.brandAssets.theme.colors.length < 3 || payload.brandAssets.theme.colors.length > 5) {
+      details.push("brandAssets.theme.colors must contain 3 to 5 hex values.");
     } else if (!payload.brandAssets.theme.colors.every(isValidHex)) {
       details.push("brandAssets.theme.colors must all be valid hex colour strings.");
     }
@@ -260,8 +260,8 @@ const validateUpdateBusiness = (req) => {
       }
       if (body.brandAssets.theme !== undefined) {
         const t = normalizeTheme(body.brandAssets.theme);
-        if (t && t.colors.length > 0 && t.colors.length !== 3) {
-          details.push("brandAssets.theme.colors must contain exactly 3 hex values.");
+        if (t && t.colors.length > 0 && (t.colors.length < 3 || t.colors.length > 5)) {
+          details.push("brandAssets.theme.colors must contain 3 to 5 hex values.");
         } else if (t && t.colors.length === 3 && !t.colors.every(isValidHex)) {
           details.push("brandAssets.theme.colors must all be valid hex colour strings.");
         } else {
@@ -304,8 +304,8 @@ const validateBrandAssets = (req) => {
 
   if (ba.theme !== undefined) {
     const t = normalizeTheme(ba.theme);
-    if (t && t.colors.length > 0 && t.colors.length !== 3) {
-      details.push("theme.colors must contain exactly 3 hex values.");
+    if (t && t.colors.length > 0 && (t.colors.length < 3 || t.colors.length > 5)) {
+      details.push("theme.colors must contain 3 to 5 hex values.");
     } else if (t && t.colors.length === 3 && !t.colors.every(isValidHex)) {
       details.push("theme.colors must all be valid hex colour strings.");
     } else {

@@ -70,6 +70,21 @@ const generateDescription = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, result, "Description generated."));
 });
 
+const uploadLogo = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json(new ApiResponse(400, null, "No file uploaded. Send a multipart/form-data request with a 'file' field."));
+  }
+  const result = await businessService.uploadLogo(req.user.id, req.file.buffer, req.file.mimetype);
+  return res.status(200).json(new ApiResponse(200, result, "Logo uploaded successfully."));
+});
+
+const generateThemes = asyncHandler(async (req, res) => {
+  const hasLogo = req.body?.hasLogo === true || req.body?.hasLogo === "true";
+  const logoUrl  = typeof req.body?.logoUrl === "string" ? req.body.logoUrl.trim() : "";
+  const result = await businessService.generateThemes(req.user.id, { hasLogo, logoUrl });
+  return res.status(200).json(new ApiResponse(200, result, "Themes generated successfully."));
+});
+
 module.exports = {
   createBusiness,
   getMyBusiness,
@@ -83,4 +98,6 @@ module.exports = {
   refreshGoogle,
   searchPlaces,
   generateDescription,
+  uploadLogo,
+  generateThemes,
 };

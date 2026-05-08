@@ -1,6 +1,20 @@
 const express = require("express");
+const multer = require("multer");
 const validateMiddleware = require("../../middlewares/validate.middleware");
 const businessController = require("./business.controller");
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only JPEG, PNG, and WebP images are allowed."));
+    }
+  },
+});
 const {
   validateCreateBusiness,
   validateUpdateBusiness,
@@ -60,5 +74,15 @@ router.post(
   validateMiddleware(validateGenerateDescription),
   businessController.generateDescription
 );
+
+// Brand: upload logo to Cloudinary
+router.post(
+  "/me/upload-logo",
+  upload.single("file"),
+  businessController.uploadLogo
+);
+
+// Brand: generate 5 AI color themes (uses logo if provided, else business info)
+router.post("/me/generate-themes", businessController.generateThemes);
 
 module.exports = router;

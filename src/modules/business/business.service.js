@@ -3,6 +3,7 @@ const logger = require("../../core/logger");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const placesService = require("../../services/places.service");
 const openaiService = require("../../services/openai.service");
+const cloudinaryService = require("../../services/cloudinary.service");
 const Business = require("./business.model");
 
 const REQUIRED_FIELDS = ["businessName", "category", "phone", "address", "timezone"];
@@ -236,6 +237,11 @@ const sanitizeBusiness = (business) => ({
       vibe:   business.brandAssets?.theme?.vibe || "",
     },
   },
+  savedThemes: (business.savedThemes || []).map((t) => ({
+    name:   t.name || "",
+    colors: t.colors || [],
+    vibe:   t.vibe || "",
+  })),
   timezone: business.timezone,
   isCompleted: deriveIsCompleted(business),
   autopilot: {
@@ -669,6 +675,65 @@ const generateDescription = async (input = {}) => {
   };
 };
 
+const uploadLogo = async (userId, fileBuffer, mimeType) => {
+  if (!cloudinaryService.isConfigured()) {
+    throw new ApiError(501, "Cloudinary is not configured. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET to .env");
+  }
+
+  const business = await Business.findOne({ userId });
+  if (!business) {
+    throw new ApiError(404, "Business profile not found.", { code: ERROR_CODES.BUSINESS_NOT_FOUND });
+  }
+
+  const { publicUrl } = await cloudinaryService.uploadBuffer(fileBuffer, {
+    folder: "brand_logos",
+    publicId: `logo_${business._id.toString()}`,
+  });
+
+  business.brandAssets = {
+    ...business.brandAssets?.toObject?.() || business.brandAssets || {},
+    logoUrl: publicUrl,
+  };
+  await business.save();
+
+  logger.info("[business] logo uploaded to Cloudinary", { businessId: business._id.toString(), publicUrl });
+  return { logoUrl: publicUrl };
+};
+
+const generateThemes = async (userId, { hasLogo, logoUrl }) => {
+  if (!openaiService.isConfigured()) {
+    throw new ApiError(501, "OpenAI is not configured (OPENAI_API_KEY missing).");
+  }
+
+  const business = await Business.findOne({ userId });
+  if (!business) {
+    throw new ApiError(404, "Business profile not found.", { code: ERROR_CODES.BUSINESS_NOT_FOUND });
+  }
+
+  logger.info("[business] generating color themes", {
+    businessId: business._id.toString(),
+    hasLogo,
+  });
+
+  const themes = await openaiService.generateColorThemes({
+    businessName:  business.businessName,
+    category:      business.category || "",
+    subcategories: business.subcategories || [],
+    description:   business.description || "",
+    hasLogo:       !!hasLogo,
+    logoUrl:       hasLogo ? (logoUrl || business.brandAssets?.logoUrl || "") : "",
+  });
+
+  if (!themes || themes.length === 0) {
+    throw new ApiError(500, "Theme generation returned no results.");
+  }
+
+  business.savedThemes = themes;
+  await business.save();
+
+  return { themes };
+};
+
 const findBusinessDocumentByUserId = async (userId) => Business.findOne({ userId });
 
 module.exports = {
@@ -684,5 +749,7 @@ module.exports = {
   completeSetup,
   searchPlaces,
   generateDescription,
+  uploadLogo,
+  generateThemes,
   findBusinessDocumentByUserId,
 };

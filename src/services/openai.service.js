@@ -205,8 +205,115 @@ const generateBrandStory = async (input = {}) => {
   return text;
 };
 
+const THEME_SYSTEM_PROMPT = `You are a brand design expert specializing in color palettes for small businesses.
+Generate exactly 5 distinct, professional color themes for the business described.
+Return ONLY valid JSON, no markdown, no explanations.
+
+JSON shape:
+{
+  "themes": [
+    {
+      "name": "Theme Name",
+      "colors": ["#hex1", "#hex2", "#hex3", "#hex4", "#hex5"],
+      "vibe": "two or three descriptive words"
+    }
+  ]
+}
+
+Color array order: [primary, secondary, accent, background, text]
+
+Rules:
+- Make exactly 5 themes with varied moods (e.g. bold, earthy, minimal, vibrant, classic)
+- background color must be light (luminance > 0.7) for poster readability
+- text color must be dark enough to read on the background
+- Each name: 2–3 evocative words, title-cased
+- vibe: 2–3 comma-separated mood words
+- Return ONLY the JSON object, nothing else`;
+
+const buildThemePrompt = (input = {}) => {
+  const lines = [];
+  if (input.businessName) lines.push(`Business: ${input.businessName}`);
+  if (input.category)     lines.push(`Type: ${input.category}`);
+  if (input.subcategories?.length) lines.push(`Specialties: ${input.subcategories.join(", ")}`);
+  if (input.description)  lines.push(`About: ${input.description}`);
+  if (input.hasLogo && input.logoUrl) {
+    lines.push(`Logo image URL (analyze dominant colors from logo): ${input.logoUrl}`);
+  } else {
+    lines.push("No logo provided — generate themes based on the business identity alone.");
+  }
+  return lines.join("\n");
+};
+
+const normalizeThemes = (raw = {}) => {
+  const themes = Array.isArray(raw.themes) ? raw.themes : [];
+  return themes
+    .filter((t) => t && Array.isArray(t.colors) && t.colors.length === 5)
+    .map((t) => ({
+      name:   typeof t.name  === "string" ? t.name.trim().slice(0, 60)  : "Untitled",
+      colors: t.colors.map((c) => (typeof c === "string" ? c.trim() : "#000000")),
+      vibe:   typeof t.vibe  === "string" ? t.vibe.trim().slice(0, 100) : "",
+    }))
+    .slice(0, 5);
+};
+
+const generateColorThemes = async (input = {}) => {
+  if (!isConfigured()) throw new Error("OpenAI is not configured (OPENAI_API_KEY missing).");
+
+  const messages = [
+    { role: "system", content: THEME_SYSTEM_PROMPT },
+    { role: "user",   content: buildThemePrompt(input) },
+  ];
+
+  // Use vision if logo URL is available and model supports it
+  if (input.hasLogo && input.logoUrl) {
+    messages[1] = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: buildThemePrompt(input),
+        },
+        {
+          type: "image_url",
+          image_url: { url: input.logoUrl, detail: "low" },
+        },
+      ],
+    };
+  }
+
+  const body = {
+    model: input.hasLogo && input.logoUrl ? "gpt-4o-mini" : env.openai.model,
+    messages,
+    response_format: { type: "json_object" },
+    temperature: 0.7,
+    max_tokens: 800,
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.openai.apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    logger.warn("[openai] theme generation failed", { status: res.status, body: errText.slice(0, 400) });
+    throw new Error(`OpenAI request failed (${res.status})`);
+  }
+
+  const json = await res.json();
+  const text = json.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("OpenAI returned an empty response.");
+
+  return normalizeThemes(safeJsonParse(text));
+};
+
 module.exports = {
   isConfigured,
   generateBrandStory,
   generateBusinessProfileSuggestions,
+  generateColorThemes,
 };
