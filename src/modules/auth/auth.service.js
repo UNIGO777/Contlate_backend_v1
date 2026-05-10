@@ -127,7 +127,7 @@ const registerUser = async ({ name, email, password }) => {
   return { email };
 };
 
-const loginUser = async ({ email, password }, { device } = {}) => {
+const loginUser = async ({ email, password }) => {
   const user = await User.findOne({ email });
 
   if (!user || user.deletedAt) {
@@ -140,12 +140,6 @@ const loginUser = async ({ email, password }, { device } = {}) => {
     throw new ApiError(423, "Account temporarily locked. Try again later.", {
       code: ERROR_CODES.AUTH_ACCOUNT_LOCKED,
       details: { lockedUntil: user.lockedUntil },
-    });
-  }
-
-  if (!user.isEmailVerified) {
-    throw new ApiError(403, "Please verify your email before signing in.", {
-      code: ERROR_CODES.AUTH_EMAIL_NOT_VERIFIED,
     });
   }
 
@@ -162,12 +156,28 @@ const loginUser = async ({ email, password }, { device } = {}) => {
     });
   }
 
+  // Login always requires an emailed OTP after the password check so the
+  // session is only created once the address owner confirms access.
   user.loginFailures = 0;
   user.lockedUntil = null;
-  user.lastLoginAt = new Date();
   await user.save();
 
-  return buildSession(user, device);
+  const { code } = await otpService.issueOtp({
+    userId: user._id,
+    email: user.email,
+    purpose: OTP_PURPOSES.VERIFY_EMAIL,
+  });
+  await sendAuthMail({
+    to: user.email,
+    subject: user.isEmailVerified ? "Confirm your login" : "Verify your email",
+    template: "verify_email",
+    data: { name: user.name, code },
+  });
+
+  return {
+    requiresOtp: true,
+    email: user.email,
+  };
 };
 
 const getCurrentUser = async (userId) => {
@@ -253,6 +263,11 @@ const verifyEmail = async ({ email, code, device }) => {
   // Guard against a race condition where two requests slip through.
   const existing = await User.findOne({ email });
   if (existing) {
+    existing.isEmailVerified = true;
+    existing.loginFailures = 0;
+    existing.lockedUntil = null;
+    existing.lastLoginAt = new Date();
+    await existing.save();
     return buildSession(existing, device);
   }
 

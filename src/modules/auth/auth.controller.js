@@ -12,7 +12,8 @@ const register = asyncHandler(async (req, res) => {
 
 const login = asyncHandler(async (req, res) => {
   const result = await authService.loginUser(req.validated, { device: deviceFromReq(req) });
-  return res.status(200).json(new ApiResponse(200, result, "Login successful."));
+  const message = result.requiresOtp ? "Verification code sent." : "Login successful.";
+  return res.status(200).json(new ApiResponse(200, result, message));
 });
 
 const me = asyncHandler(async (req, res) => {
