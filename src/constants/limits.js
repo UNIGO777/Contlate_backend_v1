@@ -19,21 +19,13 @@ const PLAN_LIMITS = Object.freeze({
     maxContentItems:      5000,
     maxUploadBytes:       15 * MB,
   },
-  [PLANS.STARTER]: {
-    uploadsPerDay:        30,
-    scheduledPostsPerDay: 28,
-    aiPostersPerDay:      28,
-    maxSocialAccounts:    3,
-    maxContentItems:      500,
-    maxUploadBytes:       10 * MB,
-  },
-  [PLANS.GROWTH]: {
-    uploadsPerDay:        100,
-    scheduledPostsPerDay: 28,
-    aiPostersPerDay:      28,
-    maxSocialAccounts:    5,
-    maxContentItems:      2000,
-    maxUploadBytes:       15 * MB,
+  [PLANS.ADVANCED]: {
+    uploadsPerDay:        1000,
+    scheduledPostsPerDay: 1000,
+    aiPostersPerDay:      500,
+    maxSocialAccounts:    100,
+    maxContentItems:      100000,
+    maxUploadBytes:       50 * MB,
   },
 });
 

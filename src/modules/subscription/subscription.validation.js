@@ -29,9 +29,9 @@ const validateCheckoutInput = (req) => {
   const { plan } = req.body || {};
   const details = [];
 
-  const paid28dPlans = [PLANS.STARTER, PLANS.GROWTH];
-  if (!paid28dPlans.includes(plan)) {
-    details.push(`plan must be one of: ${paid28dPlans.join(", ")}.`);
+  const paidPlans = [PLANS.PRO, PLANS.ADVANCED];
+  if (!paidPlans.includes(plan)) {
+    details.push(`plan must be one of: ${paidPlans.join(", ")}.`);
   }
 
   if (details.length > 0) return { error: "Validation failed.", details };
