@@ -79,6 +79,26 @@ const grantUserPlan = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, result, "Plan granted."));
 });
 
+const sendEmailBlast = asyncHandler(async (req, res) => {
+  const { audience, subject, body } = req.body || {};
+  const result = await adminService.sendEmailBlast(req.user.id, { audience, subject, body });
+  return res.status(200).json(new ApiResponse(200, result, "Email blast queued."));
+});
+
+const getEmailBlastContext = asyncHandler(async (_req, res) => {
+  const result = await adminService.getEmailBlastContext();
+  return res.status(200).json(new ApiResponse(200, result, "Email context fetched."));
+});
+
+const listAdminNotifications = asyncHandler(async (req, res) => {
+  const { limit, type } = req.query;
+  const data = await adminService.listAdminNotifications({
+    limit: limit ? Number(limit) : undefined,
+    type,
+  });
+  return res.status(200).json(new ApiResponse(200, { data }, "Notifications fetched."));
+});
+
 module.exports = {
   listUsers,
   getUser,
@@ -92,4 +112,7 @@ module.exports = {
   listJobLogs,
   listPaymentEvents,
   getStats,
+  sendEmailBlast,
+  getEmailBlastContext,
+  listAdminNotifications,
 };

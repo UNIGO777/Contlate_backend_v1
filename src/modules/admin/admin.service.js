@@ -14,6 +14,9 @@ const SocialAccount = require("../social/social.model");
 const Business = require("../business/business.model");
 const PaymentEvent = require("../subscription/paymentEvent.model");
 const JobLog = require("../../jobs/jobLog.model");
+const AdminNotification = require("./adminNotification.model");
+const mailService = require("../../services/mail.service");
+const logger = require("../../core/logger");
 const { ensureSubscriptionForUser, sanitizeSubscription } = require("../subscription/subscription.service");
 
 const sanitizeUser = (u) => ({
@@ -52,19 +55,110 @@ const getUserDetail = async (userId) => {
   if (!user) {
     throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
   }
-  const [business, subscription, contentCount, scheduleCount, socialCount] =
-    await Promise.all([
-      Business.findOne({ userId: user._id }).lean(),
-      Subscription.findOne({ userId: user._id }).lean(),
-      Content.countDocuments({ userId: user._id }),
-      Schedule.countDocuments({ userId: user._id }),
-      SocialAccount.countDocuments({ userId: user._id }),
-    ]);
+
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOf30 = new Date(now); startOf30.setDate(startOf30.getDate() - 29); startOf30.setHours(0, 0, 0, 0);
+
+  const [
+    business, subscription,
+    contentCount, scheduleCount, socialCount,
+    publishedThisMonth, upcomingScheduled, lastPostedAt, socialAccounts,
+    publishedByDay, platformBreakdown,
+  ] = await Promise.all([
+    Business.findOne({ userId: user._id }).lean(),
+    Subscription.findOne({ userId: user._id }).lean(),
+    Content.countDocuments({ userId: user._id }),
+    Schedule.countDocuments({ userId: user._id }),
+    SocialAccount.countDocuments({ userId: user._id }),
+
+    // Posts published this calendar month
+    Schedule.countDocuments({
+      userId: user._id,
+      status: "published",
+      $or: [
+        { publishedAt: { $gte: startOfMonth } },
+        { updatedAt:   { $gte: startOfMonth }, publishedAt: { $exists: false } },
+      ],
+    }),
+
+    // Upcoming scheduled (scheduled or pending, future date)
+    Schedule.countDocuments({
+      userId: user._id,
+      status: { $in: ["scheduled", "pending"] },
+      scheduledAt: { $gte: now },
+    }),
+
+    // Most recent published date
+    Schedule.findOne({ userId: user._id, status: "published" })
+      .sort({ publishedAt: -1, updatedAt: -1 })
+      .select("publishedAt updatedAt platforms")
+      .lean(),
+
+    // Full list of social accounts (without tokens)
+    SocialAccount.find({ userId: user._id })
+      .select("platform accountName accountId status lastSyncedAt createdAt tokenExpiresAt")
+      .lean(),
+
+    // Posts per day, last 30 days (for trend chart)
+    Schedule.aggregate([
+      { $match: { userId: user._id, status: "published",
+                  $or: [
+                    { publishedAt: { $gte: startOf30 } },
+                    { updatedAt:   { $gte: startOf30 } },
+                  ] } },
+      { $group: {
+        _id: { $dateToString: {
+          format: "%Y-%m-%d",
+          date: { $ifNull: ["$publishedAt", "$updatedAt"] },
+          timezone: "Asia/Kolkata",
+        } },
+        count: { $sum: 1 },
+      } },
+      { $sort: { _id: 1 } },
+    ]),
+
+    // Post count per platform (lifetime)
+    Schedule.aggregate([
+      { $match: { userId: user._id } },
+      { $unwind: "$platforms" },
+      { $group: { _id: "$platforms", count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  // Fill empty days for the 30-day series
+  const trendMap = new Map(publishedByDay.map((r) => [r._id, r.count]));
+  const postsTrend = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(startOf30); d.setDate(d.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    postsTrend.push({ date: key, count: trendMap.get(key) || 0 });
+  }
+
   return {
     user: sanitizeUser(user),
     business: business || null,
     subscription: subscription || null,
-    counts: { content: contentCount, schedules: scheduleCount, social: socialCount },
+    counts: {
+      content: contentCount,
+      schedules: scheduleCount,
+      social: socialCount,
+      publishedThisMonth,
+      upcomingScheduled,
+      lastPostedAt: lastPostedAt?.publishedAt || lastPostedAt?.updatedAt || null,
+    },
+    postsTrend,
+    platformBreakdown: platformBreakdown.map((p) => ({ platform: p._id, count: p.count })),
+    socialAccounts: socialAccounts.map((a) => ({
+      id:             a._id.toString(),
+      platform:       a.platform,
+      accountName:    a.accountName,
+      accountId:      a.accountId,
+      status:         a.status,
+      lastSyncedAt:   a.lastSyncedAt,
+      createdAt:      a.createdAt,
+      tokenExpiresAt: a.tokenExpiresAt,
+    })),
   };
 };
 
@@ -220,8 +314,11 @@ const getStats = async () => {
       { $unwind: "$user" },
       { $project: { _id: 0, userId: "$_id", count: 1, name: "$user.name", email: "$user.email", plan: "$user.plan" } },
     ]),
-    // recent payment events
-    PaymentEvent.find().sort({ createdAt: -1 }).limit(8).lean(),
+    // recent payment events + admin notifications (merged below)
+    Promise.all([
+      PaymentEvent.find().sort({ createdAt: -1 }).limit(20).lean(),
+      AdminNotification.find().sort({ createdAt: -1 }).limit(20).lean(),
+    ]),
     // active subscriptions for revenue trend
     Subscription.find({ status: { $in: ["active", "trialing"] } })
       .select("plan status startsAt createdAt")
@@ -293,15 +390,37 @@ const getStats = async () => {
     },
     platformDistribution,
     topUsers,
-    recentEvents: recentEvents.map((e) => ({
-      eventType: e.eventType,
-      provider:  e.provider,
-      createdAt: e.createdAt,
-      processedAt: e.processedAt,
-      userId:    e.userId,
-      plan:      e.payload?.plan || null,
-    })),
+    recentEvents: mergeRecentEvents(recentEvents[0], recentEvents[1]),
   };
+};
+
+/* Merge PaymentEvents + AdminNotifications into one chronological feed. */
+const mergeRecentEvents = (paymentEvents = [], adminNotifications = []) => {
+  const fromPayments = paymentEvents.map((e) => ({
+    eventType:   e.eventType,
+    provider:    e.provider,
+    createdAt:   e.createdAt,
+    processedAt: e.processedAt,
+    userId:      e.userId,
+    plan:        e.payload?.plan || null,
+    title:       null,
+    message:     null,
+  }));
+  const fromAdmin = adminNotifications.map((n) => ({
+    eventType:      n.type,
+    provider:       "admin",
+    createdAt:      n.createdAt,
+    processedAt:    n.createdAt,
+    userId:         n.targetUserId || n.actorId || null,
+    plan:           n.meta?.plan || null,
+    title:          n.title,
+    message:        n.message,
+    audience:       n.audience || null,
+    recipientCount: n.recipientCount || 0,
+  }));
+  return [...fromPayments, ...fromAdmin]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 15);
 };
 
 // Edit a user's subscription fields directly.
@@ -373,6 +492,187 @@ const grantUserPlan = async (adminId, targetUserId, { plan, endsAt } = {}) => {
   return { subscription: sanitizeSubscription(subscription), user: sanitizeUser(user) };
 };
 
+/* ───────────────────────────────────────────────────────────
+   EMAIL BLAST
+─────────────────────────────────────────────────────────── */
+
+const AUDIENCE_LABELS = {
+  all:      "All Users",
+  pro:      "Pro Plan",
+  advanced: "Advanced Plan",
+  free:     "Free Plan",
+  inactive: "Inactive Users",
+};
+
+const buildAudienceFilter = async (audience) => {
+  // Returns a Mongo filter on the User collection.
+  const baseFilter = { role: { $ne: ROLES.ADMIN }, suspendedAt: null };
+  switch (audience) {
+    case "pro":
+      return { ...baseFilter, plan: "pro" };
+    case "advanced":
+      return { ...baseFilter, plan: "advanced" };
+    case "free":
+      return { ...baseFilter, $or: [{ plan: "basic" }, { plan: { $exists: false } }] };
+    case "inactive": {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Users who have NOT had a published schedule in the last 30 days.
+      const activeUserIds = await Schedule.distinct("userId", {
+        status: "published",
+        $or: [
+          { publishedAt: { $gte: thirtyDaysAgo } },
+          { updatedAt:   { $gte: thirtyDaysAgo } },
+        ],
+      });
+      return { ...baseFilter, _id: { $nin: activeUserIds } };
+    }
+    case "all":
+    default:
+      return baseFilter;
+  }
+};
+
+const sendEmailBlast = async (adminId, { audience, subject, body } = {}) => {
+  if (!subject || !subject.trim()) {
+    throw new ApiError(400, "Subject is required.");
+  }
+  if (!body || !body.trim()) {
+    throw new ApiError(400, "Email body is required.");
+  }
+  if (!AUDIENCE_LABELS[audience]) {
+    throw new ApiError(400, "Invalid audience.");
+  }
+
+  const filter = await buildAudienceFilter(audience);
+  const recipients = await User.find(filter).select("email name").lean();
+
+  if (recipients.length === 0) {
+    // Still log it so the admin sees what happened.
+    await AdminNotification.create({
+      type:           "email_blast",
+      title:          "Email blast — no recipients",
+      message:        `Audience "${AUDIENCE_LABELS[audience]}" had 0 matching users. Nothing was sent.`,
+      actorId:        adminId,
+      audience,
+      recipientCount: 0,
+      meta:           { subject: subject.trim() },
+    });
+    return { sent: 0, audience, audienceLabel: AUDIENCE_LABELS[audience] };
+  }
+
+  // Build an HTML body. Keep it minimal; preserve line breaks from plain text.
+  const htmlBody = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width:560px; margin:0 auto; padding:24px; color:#111;">
+      <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff; padding:20px 24px; border-radius:12px 12px 0 0;">
+        <h1 style="margin:0; font-size:20px; font-weight:700;">PostEngine</h1>
+      </div>
+      <div style="background:#fff; border:1px solid #e6e8ee; border-top:none; padding:24px; border-radius:0 0 12px 12px;">
+        <h2 style="margin:0 0 14px; font-size:18px; font-weight:800; color:#0b1220;">${escapeHtml(subject.trim())}</h2>
+        <div style="font-size:14px; line-height:1.7; color:#374151; white-space:pre-wrap;">${escapeHtml(body.trim())}</div>
+        <hr style="border:none; border-top:1px solid #eef0f4; margin:20px 0;" />
+        <p style="font-size:11px; color:#9aa3b2; margin:0;">Sent to ${AUDIENCE_LABELS[audience]} · PostEngine</p>
+      </div>
+    </div>
+  `;
+
+  let sent = 0;
+  let failed = 0;
+  // Send concurrently in small batches to avoid overwhelming SMTP.
+  const BATCH = 10;
+  for (let i = 0; i < recipients.length; i += BATCH) {
+    const slice = recipients.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      slice.map((u) => mailService.send({
+        to: u.email,
+        subject: subject.trim(),
+        html: htmlBody,
+        text: body.trim(),
+      }))
+    );
+    results.forEach((r) => {
+      if (r.status === "fulfilled" && r.value?.delivered !== false) sent += 1;
+      else if (r.status === "fulfilled" && r.value?.driver === "console") sent += 1;
+      else failed += 1;
+    });
+  }
+
+  // Record the event for the notifications feed
+  await AdminNotification.create({
+    type:           "email_blast",
+    title:          `Email sent to ${sent} ${sent === 1 ? "recipient" : "recipients"}`,
+    message:        `“${subject.trim().slice(0, 80)}” — audience: ${AUDIENCE_LABELS[audience]}${failed ? ` · ${failed} failed` : ""}`,
+    actorId:        adminId,
+    audience,
+    recipientCount: sent,
+    meta: {
+      subject:    subject.trim(),
+      bodyLength: body.trim().length,
+      failed,
+      total:      recipients.length,
+    },
+  });
+
+  logger.info("[admin] email blast sent", {
+    audience, sent, failed, total: recipients.length, adminId: adminId?.toString(),
+  });
+
+  return {
+    sent,
+    failed,
+    total: recipients.length,
+    audience,
+    audienceLabel: AUDIENCE_LABELS[audience],
+  };
+};
+
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+
+/* Email blast context — audience counts + recent sends. */
+const getEmailBlastContext = async () => {
+  const audiences = ["all", "pro", "advanced", "free", "inactive"];
+  const counts = {};
+  await Promise.all(audiences.map(async (a) => {
+    const filter = await buildAudienceFilter(a);
+    counts[a] = await User.countDocuments(filter);
+  }));
+
+  const recent = await AdminNotification
+    .find({ type: "email_blast" })
+    .sort({ createdAt: -1 })
+    .limit(8)
+    .lean();
+
+  return {
+    audienceCounts: counts,
+    recentBlasts: recent.map((r) => ({
+      id:             r._id.toString(),
+      title:          r.title,
+      message:        r.message,
+      audience:       r.audience,
+      audienceLabel:  AUDIENCE_LABELS[r.audience] || r.audience,
+      recipientCount: r.recipientCount,
+      subject:        r.meta?.subject || null,
+      failed:         r.meta?.failed || 0,
+      createdAt:      r.createdAt,
+    })),
+  };
+};
+
+/* List admin notifications (for dedicated /admin/notifications endpoint). */
+const listAdminNotifications = async ({ limit = 50, type } = {}) => {
+  const filter = {};
+  if (type) filter.type = type;
+  const rows = await AdminNotification.find(filter)
+    .sort({ createdAt: -1 })
+    .limit(Math.min(limit, 200))
+    .lean();
+  return rows;
+};
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -385,4 +685,7 @@ module.exports = {
   listJobLogs,
   listPaymentEvents,
   getStats,
+  sendEmailBlast,
+  getEmailBlastContext,
+  listAdminNotifications,
 };

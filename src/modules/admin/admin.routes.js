@@ -26,4 +26,8 @@ router.post("/schedules/:scheduleId/retry", adminController.retrySchedule);
 router.get("/jobs/logs", adminController.listJobLogs);
 router.get("/payment-events", adminController.listPaymentEvents);
 
+router.post("/email/blast", adminController.sendEmailBlast);
+router.get("/email/context", adminController.getEmailBlastContext);
+router.get("/notifications", adminController.listAdminNotifications);
+
 module.exports = router;
