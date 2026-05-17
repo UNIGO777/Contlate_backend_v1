@@ -4,12 +4,13 @@ const MB = 1024 * 1024;
 
 const PLAN_LIMITS = Object.freeze({
   [PLANS.BASIC]: {
-    uploadsPerDay:        10,
-    scheduledPostsPerDay: 5,
-    aiPostersPerDay:      3,
-    maxSocialAccounts:    2,
-    maxContentItems:      100,
+    uploadsPerDay:        5,
+    scheduledPostsPerDay: 1,
+    aiPostersPerDay:      1,
+    maxSocialAccounts:    1,
+    maxContentItems:      20,
     maxUploadBytes:       5 * MB,
+    trialDays:            2,
   },
   [PLANS.PRO]: {
     uploadsPerDay:        100,
@@ -18,6 +19,7 @@ const PLAN_LIMITS = Object.freeze({
     maxSocialAccounts:    10,
     maxContentItems:      5000,
     maxUploadBytes:       15 * MB,
+    cycleDays:            28,
   },
   [PLANS.ADVANCED]: {
     uploadsPerDay:        1000,
@@ -26,6 +28,7 @@ const PLAN_LIMITS = Object.freeze({
     maxSocialAccounts:    100,
     maxContentItems:      100000,
     maxUploadBytes:       50 * MB,
+    cycleDays:            28,
   },
 });
 

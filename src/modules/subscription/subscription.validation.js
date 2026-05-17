@@ -2,6 +2,7 @@ const { PLANS } = require("../../constants/plans");
 const { BILLING_CYCLES } = require("../../constants/billingCycles");
 
 const ALL_BILLING_CYCLES = Object.values(BILLING_CYCLES);
+const VALID_BILLING_TYPES = ["one_time", "monthly", "yearly"];
 
 const validatePlanChangeInput = (req) => {
   const { plan, billingCycle } = req.body || {};
@@ -26,7 +27,7 @@ const validatePlanChangeInput = (req) => {
 };
 
 const validateCheckoutInput = (req) => {
-  const { plan } = req.body || {};
+  const { plan, billingType } = req.body || {};
   const details = [];
 
   const paidPlans = [PLANS.PRO, PLANS.ADVANCED];
@@ -34,9 +35,13 @@ const validateCheckoutInput = (req) => {
     details.push(`plan must be one of: ${paidPlans.join(", ")}.`);
   }
 
+  if (billingType !== undefined && !VALID_BILLING_TYPES.includes(billingType)) {
+    details.push(`billingType must be one of: ${VALID_BILLING_TYPES.join(", ")}.`);
+  }
+
   if (details.length > 0) return { error: "Validation failed.", details };
 
-  return { value: { plan } };
+  return { value: { plan, billingType: billingType || "one_time" } };
 };
 
 module.exports = {

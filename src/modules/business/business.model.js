@@ -33,6 +33,11 @@ const businessSchema = new mongoose.Schema(
       default: "",
       maxlength: 1500,
     },
+    website: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     contactEmail: {
       type: String,
       trim: true,
@@ -98,6 +103,11 @@ const businessSchema = new mongoose.Schema(
     isCompleted: {
       type: Boolean,
       default: false,
+    },
+    onboardingStep: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     autopilot: {
       enabled: {

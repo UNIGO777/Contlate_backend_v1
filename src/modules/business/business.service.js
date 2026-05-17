@@ -11,6 +11,19 @@ const REQUIRED_FIELDS = ["businessName", "category", "phone", "address", "timezo
 const deriveIsCompleted = (business) =>
   REQUIRED_FIELDS.every((f) => typeof business[f] === "string" && business[f].trim().length > 0);
 
+// Derives the furthest onboarding step from field presence.
+// Used for old records where onboardingStep was not yet tracked.
+// Returns 0–6; 7 is only set explicitly by completeSetup.
+const deriveOnboardingStep = (business) => {
+  if (!business.businessName?.trim() || !business.phone?.trim()) return 0;
+  if (!business.address?.trim() || !business.timezone?.trim()) return 1;
+  if (!business.category?.trim()) return 3; // skip Google match (step 2) — safe to retry
+  if (!business.description?.trim()) return 4;
+  const hasBrand = !!(business.brandAssets?.theme?.name?.trim() || business.brandAssets?.logoUrl?.trim());
+  if (!hasBrand) return 5;
+  return 6;
+};
+
 const formatAddress = (addressDetails = {}) =>
   [
     addressDetails.line1,
@@ -206,7 +219,13 @@ const profileSuggestionsForBusiness = async (business) => {
   }
 };
 
-const sanitizeBusiness = (business) => ({
+const sanitizeBusiness = (business) => {
+  // For records that predate onboardingStep tracking, derive the furthest step
+  // from field presence. For records where completeSetup was called, storedStep = 7.
+  const storedStep = business.onboardingStep ?? 0;
+  const onboardingStep = storedStep > 0 ? storedStep : deriveOnboardingStep(business);
+
+  return {
   id: business._id.toString(),
   userId: business.userId.toString(),
   businessName: business.businessName,
@@ -216,6 +235,7 @@ const sanitizeBusiness = (business) => ({
   subcategories: business.subcategories || [],
   services: business.services || [],
   description: business.description || "",
+  website: business.website || "",
   phone: business.phone,
   address: business.address,
   addressDetails: {
@@ -243,7 +263,8 @@ const sanitizeBusiness = (business) => ({
     vibe:   t.vibe || "",
   })),
   timezone: business.timezone,
-  isCompleted: deriveIsCompleted(business),
+  onboardingStep,
+  isCompleted: onboardingStep >= 7,
   autopilot: {
     enabled:          business.autopilot?.enabled ?? true,
     approvalRequired: business.autopilot?.approvalRequired ?? false,
@@ -270,7 +291,8 @@ const sanitizeBusiness = (business) => ({
     : null,
   createdAt: business.createdAt,
   updatedAt: business.updatedAt,
-});
+  };
+};
 
 // Enriches a Business document in-place with data from Google Places.
 // Only backfills user-facing fields when the user left them blank.
@@ -363,13 +385,14 @@ const startSetup = async (userId, { businessName, phone, contactEmail, hasContac
       address: "",
       timezone: "",
       isCompleted: false,
+      onboardingStep: 1,
     });
   } else {
     business.businessName = businessName;
     business.phone = phone;
     business.hasContactEmail = !!hasContactEmail;
     business.contactEmail = hasContactEmail ? (contactEmail || "") : "";
-    business.isCompleted = deriveIsCompleted(business);
+    business.onboardingStep = Math.max(business.onboardingStep || 0, 1);
     await business.save();
   }
   return sanitizeBusiness(business);
@@ -386,7 +409,7 @@ const saveSetupAddress = async (userId, { addressDetails, timezone }) => {
   business.addressDetails = addressDetails;
   business.address = formatAddress(addressDetails);
   business.timezone = timezone;
-  business.isCompleted = deriveIsCompleted(business);
+  business.onboardingStep = Math.max(business.onboardingStep || 0, 2);
   await business.save();
   return sanitizeBusiness(business);
 };
@@ -440,7 +463,7 @@ const selectSetupPlace = async (userId, { placeId }) => {
   }
 
   await enrichWithGooglePlaces(business, { placeId });
-  business.isCompleted = deriveIsCompleted(business);
+  business.onboardingStep = Math.max(business.onboardingStep || 0, 3);
   await business.save();
   return {
     business: sanitizeBusiness(business),
@@ -460,6 +483,7 @@ const completeSetup = async (userId, payload) => {
   business.subcategories = payload.subcategories || [];
   business.services = payload.services || [];
   business.description = payload.description || "";
+  if (payload.website !== undefined) business.website = payload.website || "";
   if (payload.brandAssets) {
     business.brandAssets = {
       logoUrl: payload.brandAssets.logoUrl ?? business.brandAssets?.logoUrl ?? "",
@@ -491,6 +515,7 @@ const completeSetup = async (userId, payload) => {
   }
 
   business.isCompleted = true;
+  business.onboardingStep = 7;
   await business.save();
   return sanitizeBusiness(business);
 };
@@ -516,7 +541,7 @@ const updateBusiness = async (userId, payload) => {
     (payload.businessName !== undefined && payload.businessName !== business.businessName) ||
     (payload.address !== undefined && payload.address !== business.address);
 
-  for (const f of [...REQUIRED_FIELDS, "subcategories", "services", "description"]) {
+  for (const f of [...REQUIRED_FIELDS, "subcategories", "services", "description", "website"]) {
     if (payload[f] !== undefined) business[f] = payload[f];
   }
   if (payload.brandAssets) {
@@ -539,7 +564,9 @@ const updateBusiness = async (userId, payload) => {
       approvalRequired: payload.autopilot.approvalRequired ?? business.autopilot?.approvalRequired ?? false,
     };
   }
-  business.isCompleted = deriveIsCompleted(business);
+  if (typeof payload.onboardingStep === "number") {
+    business.onboardingStep = Math.max(business.onboardingStep || 0, payload.onboardingStep);
+  }
   await business.save();
   if (nameOrAddressChanged) {
     await enrichWithGooglePlaces(business);

@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const env = require("../../config/env");
 const ApiError = require("../../core/ApiError");
-const { PLANS, PLAN_DETAILS } = require("../../constants/plans");
+const { PLANS, PLAN_DETAILS, getPriceForPlan } = require("../../constants/plans");
 const { BILLING_CYCLES } = require("../../constants/billingCycles");
 const { SUBSCRIPTION_STATUS } = require("../../constants/subscriptionStatus");
 const phonepeService = require("../../services/phonepe.service");
@@ -122,25 +122,29 @@ const cancelSubscription = async (userId) => {
   };
 };
 
-// Creates a PhonePe checkout session for a paid 28-day plan.
+// Creates a PhonePe checkout session for a paid plan.
 // Returns { redirectUrl, transactionId } — frontend redirects the user to redirectUrl.
-const createCheckout = async (userId, { plan }, { baseUrl, callbackBaseUrl }) => {
+const createCheckout = async (userId, { plan, billingType }, { baseUrl, callbackBaseUrl }) => {
   const planDetails = PLAN_DETAILS[plan];
   if (!planDetails) throw new ApiError(400, "Invalid plan.");
+
+  const resolvedBillingType = billingType || "one_time";
+  const amount = getPriceForPlan(plan, resolvedBillingType);
+  if (!amount) throw new ApiError(400, "Cannot checkout a free plan.");
 
   if (!phonepeService.isConfigured()) {
     throw new ApiError(501, "PhonePe is not configured on this server.");
   }
 
-  // Unique transaction id: userId + plan + timestamp
-  const transactionId = `PPE-${userId.toString().slice(-6)}-${plan}-${Date.now()}`;
+  // Unique transaction id: userId + plan + billingType + timestamp
+  const transactionId = `PPE-${userId.toString().slice(-6)}-${plan}-${resolvedBillingType}-${Date.now()}`;
 
   const redirectUrl  = `${baseUrl}/app/pricing?payment=success&txn=${transactionId}`;
   const callbackUrl  = `${callbackBaseUrl}/api/v1/webhooks/phonepe`;
 
   const result = await phonepeService.createCheckout({
     userId,
-    amount:        planDetails.price,
+    amount,
     transactionId,
     redirectUrl,
     callbackUrl,

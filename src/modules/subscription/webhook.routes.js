@@ -65,10 +65,11 @@ router.post(
     });
 
     // Resolve the transaction id → userId encoded in the merchantTransactionId
-    // Format: PPE-{userIdSuffix}-{plan}-{timestamp}
-    const parts   = transactionId.split("-");
-    const planCode = parts[2] || "";
-    const userId   = decoded?.data?.merchantUserId || "";
+    // Format: PPE-{userIdSuffix}-{plan}-{billingType}-{timestamp}
+    const parts       = transactionId.split("-");
+    const planCode    = parts[2] || "";
+    const billingType = parts[3] || "one_time";
+    const userId      = decoded?.data?.merchantUserId || "";
 
     const outcome = phonepeService.resolvePaymentOutcome(decoded, planCode);
     if (!outcome || !userId) {
@@ -86,8 +87,13 @@ router.post(
           const ends = new Date();
           ends.setDate(ends.getDate() + 28);
 
+          const cycleMap = {
+            one_time: BILLING_CYCLES.ONE_TIME,
+            monthly:  BILLING_CYCLES.MONTHLY,
+            yearly:   BILLING_CYCLES.YEARLY,
+          };
           subscription.plan                  = planCode;
-          subscription.billingCycle          = BILLING_CYCLES.CYCLE_28D;
+          subscription.billingCycle          = cycleMap[billingType] || BILLING_CYCLES.ONE_TIME;
           subscription.status                = SUBSCRIPTION_STATUS.ACTIVE;
           subscription.paymentProvider       = "phonepe";
           subscription.providerSubscriptionId = transactionId;
