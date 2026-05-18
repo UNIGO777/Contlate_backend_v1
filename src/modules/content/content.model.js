@@ -40,6 +40,26 @@ const contentSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    generationCost: {
+      gptCost: { type: Number, default: 0 },
+      imageCost: { type: Number, default: 0 },
+      totalCost: { type: Number, default: 0 },
+      inputTokens: { type: Number, default: 0 },
+      outputTokens: { type: Number, default: 0 },
+      imageSize: { type: String, default: "" },
+      imageQuality: { type: String, default: "" },
+    },
+    socialPostUrls: [
+      {
+        platform: { type: String },
+        accountId: { type: String },
+        postUrl: { type: String },
+        postId: { type: String },
+        postedAt: { type: Date },
+      },
+    ],
+    localImagePath: { type: String, default: "" },
+    localImageDeleted: { type: Boolean, default: false },
   },
   {
     timestamps: true,

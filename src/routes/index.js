@@ -11,6 +11,8 @@ const uploadRoutes = require("../modules/upload/upload.routes");
 const usageRoutes = require("../modules/usage/usage.routes");
 const scheduleRoutes = require("../modules/schedule/schedule.routes");
 const dashboardRoutes = require("../modules/dashboard/dashboard.routes");
+const posterRoutes = require("../modules/poster/poster.routes");
+const productPosterRoutes = require("../modules/product-poster/productPoster.routes");
 const adminRoutes = require("../modules/admin/admin.routes");
 
 const router = express.Router();
@@ -43,6 +45,8 @@ router.use("/upload", uploadRoutes);
 router.use("/usage", usageRoutes);
 router.use("/schedule", scheduleRoutes);
 router.use("/dashboard", dashboardRoutes);
+router.use("/poster", posterRoutes);
+router.use("/product-poster", productPosterRoutes);
 router.use("/admin", adminRoutes);
 
 module.exports = router;

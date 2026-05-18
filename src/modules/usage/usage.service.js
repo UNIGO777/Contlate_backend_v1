@@ -32,7 +32,7 @@ const getUserPlan = async (userId) => {
 const getOrCreateDailyUsage = async (userId, dateKey = buildDateKey()) => {
   const update = { $setOnInsert: { userId, dateKey } };
   return Usage.findOneAndUpdate({ userId, dateKey }, update, {
-    new: true,
+    returnDocument: 'after',
     upsert: true,
     setDefaultsOnInsert: true,
   });
@@ -68,7 +68,7 @@ const incrementUsage = async (userId, field, amount = 1) => {
   const usage = await Usage.findOneAndUpdate(
     { userId, dateKey },
     { $inc: { [field]: amount }, $setOnInsert: { userId, dateKey } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return sanitizeUsage(usage);
 };

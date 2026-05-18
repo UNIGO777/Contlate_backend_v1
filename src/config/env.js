@@ -64,9 +64,19 @@ const env = {
     placesApiKey: process.env.GOOGLE_PLACES_API_KEY || "",
   },
 
+  redis: {
+    host: process.env.REDIS_HOST || "127.0.0.1",
+    port: toInt(process.env.REDIS_PORT, 6379),
+    password: process.env.REDIS_PASSWORD || "",
+    db: toInt(process.env.REDIS_DB, 0),
+  },
+
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     model:  process.env.OPENAI_MODEL || "gpt-4o-mini",
+    imageEffort: ["low", "medium", "high"].includes(process.env.POSTER_IMAGE_EFFORT)
+      ? process.env.POSTER_IMAGE_EFFORT
+      : "low",
   },
 
   meta: {

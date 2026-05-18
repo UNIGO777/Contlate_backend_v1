@@ -56,7 +56,7 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
             lastSyncedAt: new Date(),
           },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
       )
     );
 
@@ -81,7 +81,7 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
               lastSyncedAt: new Date(),
             },
           },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
+          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
         )
       );
     }

@@ -62,7 +62,7 @@ const subscriptionSchema = new mongoose.Schema(
   }
 );
 
-subscriptionSchema.index({ userId: 1 }, { unique: true });
+// userId already has unique: true in the schema — no duplicate index needed
 
 const Subscription = mongoose.model("Subscription", subscriptionSchema);
 

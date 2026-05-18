@@ -32,7 +32,7 @@ const claimNext = async (now) =>
   Schedule.findOneAndUpdate(
     { status: SCHEDULE_STATUS.PENDING, scheduledAt: { $lte: now } },
     { $set: { status: SCHEDULE_STATUS.PROCESSING, lockedAt: now } },
-    { sort: { scheduledAt: 1 }, new: true }
+    { sort: { scheduledAt: 1 }, returnDocument: 'after' }
   );
 
 const computeBackoffMs = (attempts) =>
@@ -88,6 +88,34 @@ const processOne = async (schedule) => {
   if (content.status !== CONTENT_STATUS.PUBLISHED) {
     content.status = CONTENT_STATUS.PUBLISHED;
     await content.save();
+  }
+
+  // Queue poster cleanup if this content has a local image file
+  if (content.localImagePath && !content.localImageDeleted) {
+    try {
+      const { getQueues } = require("../queues/queues");
+      const queues = getQueues();
+      await queues.posterCleanup.add(
+        `cleanup-${content._id}`,
+        {
+          contentId: content._id.toString(),
+          socialPostUrls: [
+            {
+              platform: account.platform,
+              accountId: account.accountId,
+              postUrl: result.externalPostId ? `https://${account.platform}.com/${result.externalPostId}` : "",
+              postId: result.externalPostId || "",
+              postedAt: new Date().toISOString(),
+            },
+          ],
+        }
+      );
+    } catch (cleanupErr) {
+      logger.warn("[postPublisher] failed to queue cleanup", {
+        contentId: content._id.toString(),
+        error: cleanupErr.message,
+      });
+    }
   }
 };
 

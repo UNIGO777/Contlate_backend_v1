@@ -109,6 +109,40 @@ const businessSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    posterSettings: {
+      modelImagePath: { type: String, default: "" },
+      modelImageUrl: { type: String, default: "" },
+      useModelImage: { type: Boolean, default: false },
+      activeTheme: {
+        name: { type: String, trim: true, default: "" },
+        colors: { type: [String], default: [] },
+        vibe: { type: String, trim: true, default: "" },
+      },
+      defaultSize: { type: String, default: "4:5" },
+      defaultQuality: { type: String, default: "auto" },
+      defaultLanguage: { type: String, default: "english" },
+      defaultStyle: { type: String, default: "ai_decide" },
+    },
+    welcomePosters: {
+      introDone: { type: Boolean, default: false },
+      introContentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Content",
+        default: null,
+      },
+      aboutUsDone: { type: Boolean, default: false },
+      aboutUsContentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Content",
+        default: null,
+      },
+      aboutUsScheduledAt: { type: Date, default: null },
+    },
+    activeContentPlanId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ContentPlan",
+      default: null,
+    },
     autopilot: {
       enabled: {
         type: Boolean,
@@ -148,7 +182,7 @@ const businessSchema = new mongoose.Schema(
   }
 );
 
-businessSchema.index({ userId: 1 }, { unique: true });
+// userId already has unique: true in the schema — no duplicate index needed
 
 const Business = mongoose.model("Business", businessSchema);
 

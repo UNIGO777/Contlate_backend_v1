@@ -56,7 +56,7 @@ const userSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false }
 );
 
-userSchema.index({ email: 1 }, { unique: true });
+// email already has unique: true in the schema — no duplicate index needed
 
 const User = mongoose.model("User", userSchema);
 

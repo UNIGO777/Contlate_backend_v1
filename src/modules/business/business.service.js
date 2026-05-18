@@ -1,5 +1,6 @@
 const ApiError = require("../../core/ApiError");
 const logger = require("../../core/logger");
+const env = require("../../config/env");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const placesService = require("../../services/places.service");
 const openaiService = require("../../services/openai.service");
@@ -463,6 +464,22 @@ const selectSetupPlace = async (userId, { placeId }) => {
   }
 
   await enrichWithGooglePlaces(business, { placeId });
+  // Pre-fill website from Google so it shows up in the description step
+  if (!business.website && business.google?.website) {
+    business.website = business.google.website;
+    if (env.nodeEnv === "development") {
+      logger.info("[selectSetupPlace] auto-filled website from Google", {
+        businessId: business._id.toString(),
+        website: business.website,
+      });
+    }
+  } else if (env.nodeEnv === "development") {
+    logger.info("[selectSetupPlace] website status", {
+      businessId: business._id.toString(),
+      existingWebsite: business.website || "(empty)",
+      googleWebsite: business.google?.website || "(none)",
+    });
+  }
   business.onboardingStep = Math.max(business.onboardingStep || 0, 3);
   await business.save();
   return {
@@ -516,7 +533,56 @@ const completeSetup = async (userId, payload) => {
 
   business.isCompleted = true;
   business.onboardingStep = 7;
+
+  // Copy brand theme to posterSettings.activeTheme
+  if (business.brandAssets?.theme?.colors?.length) {
+    business.posterSettings = business.posterSettings || {};
+    business.posterSettings.activeTheme = {
+      name: business.brandAssets.theme.name || "",
+      colors: business.brandAssets.theme.colors || [],
+      vibe: business.brandAssets.theme.vibe || "",
+    };
+  }
+
   await business.save();
+
+  // Queue welcome posters only for brand-new users (never re-queue on repeat calls)
+  const alreadyQueued = business.welcomePosters?.introDone || business.welcomePosters?.aboutUsScheduledAt;
+  if (!alreadyQueued) {
+    try {
+      const { getQueues } = require("../../queues/queues");
+      const queues = getQueues();
+
+      // Intro poster — immediately
+      await queues.welcomePoster.add(
+        `intro-${business._id}`,
+        { businessId: business._id.toString(), userId: String(userId), posterType: "intro" },
+        { jobId: `intro-${business._id}` }
+      );
+
+      // About-us poster — 24 hours from now
+      const aboutUsDelay = 24 * 60 * 60 * 1000;
+      await queues.welcomePoster.add(
+        `about-us-${business._id}`,
+        { businessId: business._id.toString(), userId: String(userId), posterType: "about-us" },
+        { jobId: `about-us-${business._id}`, delay: aboutUsDelay }
+      );
+
+      // Track the scheduled time
+      await Business.updateOne(
+        { _id: business._id },
+        { $set: { "welcomePosters.aboutUsScheduledAt": new Date(Date.now() + aboutUsDelay) } }
+      );
+    } catch (queueErr) {
+      // Don't fail onboarding if queue is unavailable
+      const logger = require("../../core/logger");
+      logger.warn("[completeSetup] failed to queue welcome posters", {
+        businessId: business._id.toString(),
+        error: queueErr.message,
+      });
+    }
+  }
+
   return sanitizeBusiness(business);
 };
 

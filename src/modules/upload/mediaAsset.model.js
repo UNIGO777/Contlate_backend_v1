@@ -41,7 +41,7 @@ const mediaAssetSchema = new mongoose.Schema(
 );
 
 mediaAssetSchema.index({ userId: 1, createdAt: -1 });
-mediaAssetSchema.index({ storageKey: 1 }, { unique: true });
+// storageKey already has unique: true in the schema — no duplicate index needed
 
 const MediaAsset = mongoose.model("MediaAsset", mediaAssetSchema);
 
