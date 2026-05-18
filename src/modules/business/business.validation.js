@@ -247,6 +247,20 @@ const validateUpdateBusiness = (req) => {
     }
   }
 
+  if (body.addressDetails !== undefined) {
+    if (typeof body.addressDetails !== "object" || body.addressDetails === null) {
+      details.push("addressDetails must be an object.");
+    } else {
+      const ad = normalizeAddressDetails(body.addressDetails);
+      for (const f of ["line1", "city", "state", "country", "pincode"]) {
+        if (!isNonEmptyString(ad[f])) details.push(`addressDetails.${f} is required.`);
+      }
+      if (details.length === 0) {
+        value.addressDetails = ad;
+      }
+    }
+  }
+
   if (body.brandAssets !== undefined) {
     if (typeof body.brandAssets !== "object" || body.brandAssets === null) {
       details.push("brandAssets must be an object.");

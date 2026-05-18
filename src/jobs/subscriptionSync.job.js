@@ -3,6 +3,7 @@ const { PLANS } = require("../constants/plans");
 const { SUBSCRIPTION_STATUS } = require("../constants/subscriptionStatus");
 const Subscription = require("../modules/subscription/subscription.model");
 const User = require("../modules/user/user.model");
+const seoPlanChange = require("../services/seoPlanChange.service");
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000; // hourly
 
@@ -13,12 +14,23 @@ const expireDueTrials = async (now) => {
   });
 
   for (const sub of due) {
+    const oldPlan = sub.plan;
     sub.status = SUBSCRIPTION_STATUS.EXPIRED;
     sub.plan = PLANS.BASIC;
     sub.endsAt = now;
     await sub.save();
     await User.updateOne({ _id: sub.userId }, { $set: { plan: PLANS.BASIC } });
     logger.info("[subscriptionSync] trial expired", { userId: sub.userId.toString() });
+
+    // SEO plan change (fire-and-forget)
+    if (oldPlan !== PLANS.BASIC) {
+      seoPlanChange.handlePlanChange(sub.userId, oldPlan, PLANS.BASIC).catch((err) => {
+        logger.error("[subscriptionSync] SEO plan change failed", {
+          userId: sub.userId.toString(),
+          error: err.message,
+        });
+      });
+    }
   }
   return due.length;
 };
@@ -30,11 +42,22 @@ const expireDuePaidPlans = async (now) => {
   });
 
   for (const sub of due) {
+    const oldPlan = sub.plan;
     sub.status = SUBSCRIPTION_STATUS.EXPIRED;
     sub.plan = PLANS.BASIC;
     await sub.save();
     await User.updateOne({ _id: sub.userId }, { $set: { plan: PLANS.BASIC } });
     logger.info("[subscriptionSync] subscription expired", { userId: sub.userId.toString() });
+
+    // SEO plan change (fire-and-forget)
+    if (oldPlan !== PLANS.BASIC) {
+      seoPlanChange.handlePlanChange(sub.userId, oldPlan, PLANS.BASIC).catch((err) => {
+        logger.error("[subscriptionSync] SEO plan change failed", {
+          userId: sub.userId.toString(),
+          error: err.message,
+        });
+      });
+    }
   }
   return due.length;
 };

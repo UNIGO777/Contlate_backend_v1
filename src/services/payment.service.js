@@ -7,6 +7,7 @@ const { SUBSCRIPTION_STATUS } = require("../constants/subscriptionStatus");
 const Subscription = require("../modules/subscription/subscription.model");
 const User = require("../modules/user/user.model");
 const PaymentEvent = require("../modules/subscription/paymentEvent.model");
+const seoPlanChange = require("./seoPlanChange.service");
 
 const PROVIDER_RAZORPAY = "razorpay";
 
@@ -58,6 +59,9 @@ const applyEventToSubscription = async (eventType, payload) => {
     });
   }
 
+  // Capture old plan for SEO plan-change detection
+  const oldPlan = user.plan;
+
   switch (eventType) {
     case "subscription.activated":
     case "subscription.charged":
@@ -91,6 +95,20 @@ const applyEventToSubscription = async (eventType, payload) => {
 
   await subscription.save();
   await user.save();
+
+  // Trigger SEO plan change handler (fire-and-forget)
+  const newPlan = user.plan;
+  if (oldPlan !== newPlan) {
+    seoPlanChange.handlePlanChange(user._id, oldPlan, newPlan).catch((err) => {
+      logger.error("[payment] SEO plan change handler failed", {
+        userId: user._id,
+        oldPlan,
+        newPlan,
+        error: err.message,
+      });
+    });
+  }
+
   return subscription;
 };
 

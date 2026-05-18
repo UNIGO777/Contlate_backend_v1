@@ -2,6 +2,8 @@ const express = require("express");
 const multer = require("multer");
 const validateMiddleware = require("../../middlewares/validate.middleware");
 const businessController = require("./business.controller");
+const seoRoutes = require("../seo/seo.routes");
+const gbpRoutes = require("../seo/gbp.routes");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -84,5 +86,11 @@ router.post(
 
 // Brand: generate 5 AI color themes (uses logo if provided, else business info)
 router.post("/me/generate-themes", businessController.generateThemes);
+
+// SEO sub-routes: /business/seo/*
+router.use("/seo", seoRoutes);
+
+// GBP sub-routes: /business/gbp/*
+router.use("/gbp", gbpRoutes);
 
 module.exports = router;

@@ -5,6 +5,8 @@ const { ERROR_CODES } = require("../../constants/errorCodes");
 const placesService = require("../../services/places.service");
 const openaiService = require("../../services/openai.service");
 const cloudinaryService = require("../../services/cloudinary.service");
+const seoService = require("../../services/seo.service");
+const seoBusinessChangeService = require("../../services/seoBusinessChange.service");
 const Business = require("./business.model");
 
 const REQUIRED_FIELDS = ["businessName", "category", "phone", "address", "timezone"];
@@ -575,12 +577,25 @@ const completeSetup = async (userId, payload) => {
       );
     } catch (queueErr) {
       // Don't fail onboarding if queue is unavailable
-      const logger = require("../../core/logger");
-      logger.warn("[completeSetup] failed to queue welcome posters", {
+      const loggerFallback = require("../../core/logger");
+      loggerFallback.warn("[completeSetup] failed to queue welcome posters", {
         businessId: business._id.toString(),
         error: queueErr.message,
       });
     }
+  }
+
+  // Trigger SEO data fetch (fire-and-forget) — fetches keywords + rank for all users
+  // Guard: skip if SEO was already triggered (idempotency for retry calls)
+  const seoAlreadyTriggered =
+    business.seo?.status !== "pending" || (business.seo?.keywords?.length || 0) > 0;
+  if (!seoAlreadyTriggered && business.category && business.addressDetails?.city) {
+    seoService.refreshBusinessSEO(business._id).catch((seoErr) => {
+      logger.warn("[completeSetup] SEO refresh failed (will retry on next cron)", {
+        businessId: business._id.toString(),
+        error: seoErr.message,
+      });
+    });
   }
 
   return sanitizeBusiness(business);
@@ -605,10 +620,20 @@ const updateBusiness = async (userId, payload) => {
   }
   const nameOrAddressChanged =
     (payload.businessName !== undefined && payload.businessName !== business.businessName) ||
-    (payload.address !== undefined && payload.address !== business.address);
+    (payload.address !== undefined && payload.address !== business.address) ||
+    (payload.addressDetails !== undefined);
+
+  // Capture old SEO-relevant fields before update
+  const oldCategory = business.category;
+  const oldCity = business.addressDetails?.city;
 
   for (const f of [...REQUIRED_FIELDS, "subcategories", "services", "description", "website"]) {
     if (payload[f] !== undefined) business[f] = payload[f];
+  }
+  // Update addressDetails if provided, and rebuild the flat address string
+  if (payload.addressDetails) {
+    business.addressDetails = payload.addressDetails;
+    business.address = formatAddress(payload.addressDetails);
   }
   if (payload.brandAssets) {
     business.brandAssets = {
@@ -637,6 +662,27 @@ const updateBusiness = async (userId, payload) => {
   if (nameOrAddressChanged) {
     await enrichWithGooglePlaces(business);
   }
+
+  // Detect category or city change and trigger SEO reset (fire-and-forget)
+  const newCategory = business.category;
+  const newCity = business.addressDetails?.city;
+  const categoryOrCityChanged =
+    oldCategory && oldCity &&
+    (oldCategory !== newCategory || oldCity !== newCity);
+
+  if (categoryOrCityChanged && business.isCompleted) {
+    const User = require("../user/user.model");
+    const user = await User.findById(userId).select("plan");
+    seoBusinessChangeService
+      .handleBusinessCategoryOrCityChange(business, user?.plan || "basic", oldCategory, oldCity)
+      .catch((err) => {
+        logger.warn("[updateBusiness] SEO category/city change handler failed", {
+          businessId: business._id.toString(),
+          error: err.message,
+        });
+      });
+  }
+
   return sanitizeBusiness(business);
 };
 

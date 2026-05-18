@@ -62,6 +62,21 @@ const env = {
 
   google: {
     placesApiKey: process.env.GOOGLE_PLACES_API_KEY || "",
+    clientId: process.env.GOOGLE_CLIENT_ID || "",
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+    redirectUri:
+      process.env.GOOGLE_REDIRECT_URI ||
+      "http://localhost:5000/api/v1/business/gbp/callback",
+  },
+
+  dataForSeo: {
+    login: process.env.DATAFORSEO_LOGIN || "",
+    password: process.env.DATAFORSEO_PASSWORD || "",
+  },
+
+  encryption: {
+    tokenKey1: process.env.TOKEN_ENCRYPTION_KEY_1 || "",
+    currentVersion: toInt(process.env.CURRENT_ENCRYPTION_VERSION, 1),
   },
 
   redis: {

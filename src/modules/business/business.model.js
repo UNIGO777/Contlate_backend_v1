@@ -153,6 +153,39 @@ const businessSchema = new mongoose.Schema(
         default: false,
       },
     },
+    seo: {
+      locationName: { type: String, trim: true, default: "" },
+      cacheKey: { type: String, trim: true, default: "" },
+      rankDataAvailable: { type: Boolean, default: false },
+      keywordsFromCache: { type: Boolean, default: false },
+      keywords: [
+        {
+          _id: false,
+          keyword: { type: String },
+          monthlyVolume: { type: Number, default: null },
+          competition: { type: String, default: null },
+          mapsRank: { type: Number, default: null },
+          topBusiness: { type: String, default: null },
+          trendValue: { type: Number, default: null },
+          isRising: { type: Boolean, default: null },
+          source: {
+            type: String,
+            enum: ["google_trends", "template", null],
+            default: null,
+          },
+          updatedAt: { type: Date, default: null },
+        },
+      ],
+      lastKeywordRefresh: { type: Date, default: null },
+      lastRankRefresh: { type: Date, default: null },
+      status: {
+        type: String,
+        enum: ["pending", "keywords_ready", "ready", "error"],
+        default: "pending",
+      },
+      lastError: { type: String, default: "" },
+    },
+
     google: {
       placeId: { type: String, trim: true, default: "" },
       displayName: { type: String, trim: true, default: "" },
@@ -183,6 +216,9 @@ const businessSchema = new mongoose.Schema(
 );
 
 // userId already has unique: true in the schema — no duplicate index needed
+
+businessSchema.index({ "seo.cacheKey": 1 });
+businessSchema.index({ "seo.lastRankRefresh": 1 });
 
 const Business = mongoose.model("Business", businessSchema);
 

@@ -5,6 +5,7 @@ const { seedAdmin } = require("./config/seedAdmin");
 const logger = require("./core/logger");
 const subscriptionSyncJob = require("./jobs/subscriptionSync.job");
 const postPublisherJob = require("./jobs/postPublisher.job");
+const seoRefreshJob = require("./jobs/seoRefresh.job");
 
 /**
  * Probe Redis before starting queue workers.
@@ -44,6 +45,7 @@ const startServer = async () => {
     // Existing jobs (MongoDB-based, always start)
     subscriptionSyncJob.start();
     postPublisherJob.start();
+    seoRefreshJob.start();
 
     // BullMQ queue workers — only start if Redis is reachable
     const redisOk = await probeRedis();
