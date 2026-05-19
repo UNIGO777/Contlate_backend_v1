@@ -25,11 +25,12 @@ const SIZE_MAP = {
     crop: false,
   },
   "4:5": {
-    label: "Portrait 4:5",
-    apiSize: "1024x1536",
-    canvasDesc: "portrait rectangle (4:5 ratio), 1080×1350 px. Use the FULL canvas from top to bottom. Business name at top, CTA and contact info near bottom.",
-    safeH: 1536,
+    label: "Square 1:1",
+    apiSize: "1024x1024",
+    canvasDesc: "perfect square (1:1 ratio), 1080×1080 px. Use the full canvas. Business name near top, CTA and contact info near bottom.",
+    safeH: 1024,
     crop: false,
+    resize: { width: 1080, height: 1080 },
   },
   "1024x1536": {
     label: "Portrait 2:3",
@@ -181,6 +182,7 @@ const buildPromptSystemMessage = (business, dayPlan, options = {}) => {
       "HINDI + ENGLISH MIX — Use Hindi (Devanagari) for headlines, taglines, CTAs and emotional content. Use English for technical terms, business name, and contact info.";
   }
 
+  // Safe-zone instruction for sizes that get cropped after generation
   return `You are a world-class marketing poster designer and copywriter.
 
 Your output MUST follow this exact format:
@@ -205,7 +207,7 @@ Business details:
 - Content type: ${dayPlan.contentType}
 - Target Audience: general public
 - Language: ${langInstruction}
-- Poster format: ${sizeMeta.canvasDesc}
+- Poster format: \${sizeMeta.canvasDesc}
 - Visual style & Color palette: ${style === "ai_decide" ? `YOU decide the best style. Use these brand colors as base: ${theme.colors?.join(", ") || "choose 3-4 hex codes that suit this business"}. Vibe: ${theme.vibe || "professional, modern"}` : `${style} — Use brand colors: ${theme.colors?.join(", ") || "choose appropriate colors"}`}
 ${contactStr ? `- Contact info to display: ${contactStr}` : "- No contact info to display"}
 ${hasModelImg ? "- MODEL IMAGE PROVIDED: A person/model photo will be composited into the poster." : ""}
@@ -296,13 +298,16 @@ const buildFinalPrompt = (basePrompt, textFields, business, sizeKey) => {
   return final;
 };
 
+// ────────────────────────────────────────────────────
+// 3. GENERATE POSTER IMAGE
+// ────────────────────────────────────────────────────
+
 const generatePosterImage = async (
   prompt,
   textFields,
   business,
   { size = "4:5", quality, modelImageBuffer = null } = {}
 ) => {
-  // Effort level from .env overrides everything; fall back to passed quality or "low"
   const effort = env.openai.imageEffort || quality || "low";
   const sizeMeta = SIZE_MAP[size] || SIZE_MAP["4:5"];
   const apiSize = sizeMeta.apiSize;
@@ -311,9 +316,6 @@ const generatePosterImage = async (
   let data;
 
   if (modelImageBuffer) {
-    // Use edits endpoint with model image
-    const FormData = (await import("node-fetch")).default ? null : null;
-    // BullMQ workers run in Node — use native fetch with FormData
     const formData = new globalThis.FormData();
     formData.append("model", "gpt-image-2");
     formData.append("prompt", finalPrompt);
@@ -325,7 +327,6 @@ const generatePosterImage = async (
       new Blob([modelImageBuffer], { type: "image/png" }),
       "model.png"
     );
-
     const res = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
       headers: { Authorization: `Bearer ${env.openai.apiKey}` },
@@ -337,7 +338,6 @@ const generatePosterImage = async (
     }
     data = await res.json();
   } else {
-    // Use generations endpoint
     data = await callOpenAI("images/generations", {
       model: "gpt-image-2",
       prompt: finalPrompt,
@@ -352,13 +352,10 @@ const generatePosterImage = async (
 
   let imageBuffer = Buffer.from(b64, "base64");
 
-  // Crop to 4:5 if needed (1024x1536 → 1024x1024, removing 256px top and bottom)
-  if (sizeMeta.crop) {
-    const outW = 1024;
-    const cropEach = 256; // 256px off top + 256px off bottom = matches safe zone told to AI
-    const outH = 1536 - cropEach * 2; // 1024px
+  // Resize to target dimensions if specified (no cropping — scales the full image)
+  if (sizeMeta.resize) {
     imageBuffer = await sharp(imageBuffer)
-      .extract({ left: 0, top: cropEach, width: outW, height: outH })
+      .resize(sizeMeta.resize.width, sizeMeta.resize.height, { fit: "fill" })
       .png()
       .toBuffer();
   }
