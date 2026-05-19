@@ -8,10 +8,20 @@ const seoKeywordCacheSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    type: {
+      type: String,
+      enum: ["category", "subcategory"],
+      default: "category",
+    },
     category: {
       type: String,
       required: true,
       trim: true,
+    },
+    subcategory: {
+      type: String,
+      trim: true,
+      default: "",
     },
     city: {
       type: String,

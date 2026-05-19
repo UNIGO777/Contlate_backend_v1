@@ -41,8 +41,11 @@ async function handleUpgrade(userId) {
     const cachedEntry = await seoCacheService.checkCache(cacheKey);
 
     if (!cachedEntry) {
-      // Cache expired — full refresh (keywords + rank)
-      // refreshBusinessSEO handles premiumUserCount increment via alreadyCounted guard
+      // Cache expired — full refresh (keywords + rank).
+      // refreshBusinessSEO handles premiumUserCount increment internally via
+      // the alreadyCounted guard (checks business.seo.keywordsFromCache).
+      // Since the cache is expired, a fresh fetch runs, keywordsFromCache will
+      // be set to false during the flow, so the increment happens exactly once.
       logger.info("[seoPlanChange] cache expired, queuing full SEO refresh", {
         businessId: business._id,
       });

@@ -27,15 +27,14 @@ const SIZE_MAP = {
   "4:5": {
     label: "Portrait 4:5",
     apiSize: "1024x1536",
-    canvasDesc:
-      "portrait rectangle (2:3), 1024×1536 px. IMPORTANT CROP: the top 10% and bottom 10% will be SLICED OFF. Treat top 10% and bottom 10% as DEAD ZONES — only decorative background, ZERO text. All text must live between 12% and 88% of image height.",
-    safeH: 1280,
-    crop: true,
+    canvasDesc: "portrait rectangle (4:5 ratio), 1080×1350 px. Use the FULL canvas from top to bottom. Business name at top, CTA and contact info near bottom.",
+    safeH: 1536,
+    crop: false,
   },
   "1024x1536": {
     label: "Portrait 2:3",
     apiSize: "1024x1536",
-    canvasDesc: "portrait rectangle (2:3), 1024×1536 px",
+    canvasDesc: "portrait rectangle (2:3), 1080×1350 px",
     safeH: 1536,
     crop: false,
   },
@@ -105,8 +104,6 @@ Business Details:
 - Services: ${(business.services || []).join(", ") || "N/A"}
 - Description: ${business.description || "N/A"}
 - Location: ${formatAddress(business)}
-${business.google?.rating ? `- Google Rating: ${business.google.rating}★ (${business.google.userRatingCount} reviews)` : ""}
-
 Content mix guidelines:
 - 30% promotional (offers, discounts, new arrivals, seasonal specials)
 - 25% educational (tips, how-to, industry facts, myth-busting)
@@ -212,7 +209,6 @@ Business details:
 - Visual style & Color palette: ${style === "ai_decide" ? `YOU decide the best style. Use these brand colors as base: ${theme.colors?.join(", ") || "choose 3-4 hex codes that suit this business"}. Vibe: ${theme.vibe || "professional, modern"}` : `${style} — Use brand colors: ${theme.colors?.join(", ") || "choose appropriate colors"}`}
 ${contactStr ? `- Contact info to display: ${contactStr}` : "- No contact info to display"}
 ${hasModelImg ? "- MODEL IMAGE PROVIDED: A person/model photo will be composited into the poster." : ""}
-${business.google?.rating ? `- Google Rating: ${business.google.rating}★ (${business.google.userRatingCount} reviews) — include if relevant` : ""}
 
 STYLE RULES (CRITICAL):
 1. NO markdown bold (**), NO headers with asterisks. Plain text section labels with colons.
@@ -221,14 +217,15 @@ STYLE RULES (CRITICAL):
 4. Use bullet points (• or -) for lists, ✓ for checklists.
 5. Include 3-4 specific HEX color codes in the Design Style section.
 6. The whole prompt should be 30-50 lines, NOT 100+.
+7. DO NOT include Google ratings, star ratings, or review counts anywhere in the poster.
 
 CONTENT RULES:
 1. Start with: "Create a professional [type] poster for [business] in a [style] style."
 2. Then: "Canvas: [ratio], [dimensions]. Ultra high resolution, print-ready."
-${sizeKey === "4:5" ? '3. Add crop warning: "CRITICAL CROP: bottom 18% and top 12% are DEAD ZONES — zero text allowed. Contact info must END by 80% height."\n' : ""}
 3. Include Layout Composition, Typography, Card/Info sections, CTA, Footer, Design Style.
 4. ALL text must be PERFECTLY SPELLED — especially "${business.businessName}" and contact info.
 5. Make content specific to ${business.category || "this business"} and the topic "${dayPlan.topic}".
+6. Do NOT mention or include Google ratings, star ratings, or review counts.
 
 Return EXACTLY the ===TEXT=== / ===PROMPT=== format. Nothing else.`;
 };
@@ -283,28 +280,18 @@ const generatePosterPrompt = async (business, dayPlan, options = {}) => {
 const buildFinalPrompt = (basePrompt, textFields, business, sizeKey) => {
   const bizName = business.businessName;
   const contactStr = formatContact(business);
-  const is45 = sizeKey === "4:5";
 
   let final = basePrompt;
 
   final += `\n\n⚠️ MANDATORY TEXT — The poster MUST display ALL of these texts, spelled EXACTLY letter-by-letter:`;
-  final += `\n\n1. BUSINESS NAME (largest text, top of poster): "${bizName}"`;
+  final += `\n\n1. BUSINESS NAME (prominent text near top): "${bizName}"`;
   if (textFields.headline) final += `\n2. HEADLINE (bold, below business name): "${textFields.headline}"`;
   if (textFields.tagline) final += `\n3. TAGLINE (stylish, middle area): "${textFields.tagline}"`;
   if (textFields.offer) final += `\n4. OFFER (clear, readable): "${textFields.offer.replace(/\n/g, " | ")}"`;
   if (textFields.cta) final += `\n5. CTA BUTTON (eye-catching button shape): "${textFields.cta}"`;
-  if (contactStr) final += `\n6. CONTACT INFO (small text, bottom of poster): ${contactStr}`;
+  if (contactStr) final += `\n6. CONTACT INFO (small text, bottom footer): ${contactStr}`;
   final += `\n\nDo NOT skip any text element. Do NOT paraphrase. Do NOT add extra text. Spell "${bizName}" EXACTLY as shown.`;
-
-  if (is45) {
-    final += `\n\n⚠️ CRITICAL CROP WARNING: The top 128px (10%) and bottom 128px (10%) of this 1024×1536 image will be COMPLETELY SLICED OFF to make a 1024×1280 poster.`;
-    final += `\nABSOLUTE RULES:`;
-    final += `\n- ZERO text, logos, or contact info in the top 12% or bottom 18% of the image.`;
-    final += `\n- Business name must start at ~14% from top.`;
-    final += `\n- Contact info / footer must END by 80% from top — leave the bottom 20% as ONLY solid background color or gradient.`;
-    final += `\n- The CTA button must be fully above the 78% mark.`;
-    final += `\n- If you place ANY text below 80% it WILL be cropped and invisible. This is non-negotiable.`;
-  }
+  final += `\nDo NOT include Google ratings, star ratings, or review counts anywhere.`;
 
   return final;
 };
@@ -365,14 +352,13 @@ const generatePosterImage = async (
 
   let imageBuffer = Buffer.from(b64, "base64");
 
-  // Crop to 4:5 if needed (1024x1536 → 1024x1280)
+  // Crop to 4:5 if needed (1024x1536 → 1024x1024, removing 256px top and bottom)
   if (sizeMeta.crop) {
     const outW = 1024;
-    const outH = 1280;
-    const srcH = 1536;
-    const offsetY = Math.round((srcH - outH) / 2);
+    const cropEach = 256; // 256px off top + 256px off bottom = matches safe zone told to AI
+    const outH = 1536 - cropEach * 2; // 1024px
     imageBuffer = await sharp(imageBuffer)
-      .extract({ left: 0, top: offsetY, width: outW, height: outH })
+      .extract({ left: 0, top: cropEach, width: outW, height: outH })
       .png()
       .toBuffer();
   }
@@ -446,7 +432,7 @@ const WELCOME_TEMPLATES = {
   }),
   "about-us": (business) => ({
     topic: `About ${business.businessName} — Our Story`,
-    description: `About us poster featuring brand story, top services, ${business.google?.rating ? `Google rating ${business.google.rating}★,` : ""} and contact details`,
+    description: `About us poster featuring brand story, top services, and contact details`,
     contentType: "about-us",
   }),
 };

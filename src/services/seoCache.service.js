@@ -13,6 +13,14 @@ function buildCacheKey(category, city) {
 }
 
 /**
+ * Build a cache key for a subcategory.
+ * Format: "subcategory:teeth whitening|city:bhopal"
+ */
+function buildSubcategoryCacheKey(subcategory, city) {
+  return `subcategory:${subcategory.toLowerCase().trim()}|city:${city.toLowerCase().trim()}`;
+}
+
+/**
  * Check cache for existing keyword data.
  * Returns cached entry if exists and not expired, null otherwise. (Rule 1)
  */
@@ -53,7 +61,7 @@ async function checkCache(cacheKey) {
 async function copyToBusinessSeo(business, cachedEntry, userPlan, alreadyCounted = false) {
   const PREMIUM_PLANS = [PLANS.PRO, PLANS.ADVANCED];
 
-  // Copy keywords without rank data
+  // Copy keywords without rank data (preserve group metadata)
   business.seo.keywords = cachedEntry.keywords.map((kw) => ({
     keyword: kw.keyword,
     monthlyVolume: kw.monthlyVolume,
@@ -61,6 +69,8 @@ async function copyToBusinessSeo(business, cachedEntry, userPlan, alreadyCounted
     trendValue: kw.trendValue,
     isRising: kw.isRising,
     source: kw.source || null,
+    group: kw.group || null,
+    groupType: kw.groupType || null,
     mapsRank: null,
     topBusiness: null,
     updatedAt: new Date(),
@@ -101,7 +111,7 @@ async function copyToBusinessSeo(business, cachedEntry, userPlan, alreadyCounted
  * Create or update a cache entry with fresh keyword data.
  * Preserves premiumUserCount across updates.
  */
-async function updateCache(cacheKey, { category, city, state, locationName, keywords }) {
+async function updateCache(cacheKey, { category, city, state, locationName, keywords, type = "category", subcategory = "" }) {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000);
 
@@ -109,7 +119,9 @@ async function updateCache(cacheKey, { category, city, state, locationName, keyw
     { cacheKey },
     {
       $set: {
+        type,
         category,
+        subcategory,
         city,
         state,
         locationName,
@@ -137,6 +149,7 @@ async function updateCache(cacheKey, { category, city, state, locationName, keyw
 
 module.exports = {
   buildCacheKey,
+  buildSubcategoryCacheKey,
   checkCache,
   copyToBusinessSeo,
   updateCache,

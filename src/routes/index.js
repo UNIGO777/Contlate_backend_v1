@@ -14,6 +14,7 @@ const dashboardRoutes = require("../modules/dashboard/dashboard.routes");
 const posterRoutes = require("../modules/poster/poster.routes");
 const productPosterRoutes = require("../modules/product-poster/productPoster.routes");
 const adminRoutes = require("../modules/admin/admin.routes");
+const notificationRoutes = require("../modules/notification/notification.routes");
 
 const router = express.Router();
 
@@ -48,5 +49,6 @@ router.use("/dashboard", dashboardRoutes);
 router.use("/poster", posterRoutes);
 router.use("/product-poster", productPosterRoutes);
 router.use("/admin", adminRoutes);
+router.use("/notifications", notificationRoutes);
 
 module.exports = router;

@@ -62,6 +62,7 @@ async function handleBusinessCategoryOrCityChange(business, userPlan, oldCategor
   business.seo.cacheKey = newCacheKey;
   business.seo.keywordsFromCache = false;
   business.seo.lastError = "";
+  business.markModified("seo");
   await business.save();
 
   // Step 3 — Trigger fresh SEO fetch (fire-and-forget)

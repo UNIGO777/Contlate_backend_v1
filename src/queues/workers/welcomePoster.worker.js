@@ -103,6 +103,23 @@ const start = () => {
 
       await Business.updateOne({ _id: businessId }, { $set: updateField });
 
+      // Emit socket event so frontend shows congrats popup immediately
+      try {
+        const { getIO } = require("../../core/socket");
+        const io = getIO();
+        if (io) {
+          io.to(`business:${businessId}`).emit("poster:ready", {
+            businessId: businessId.toString(),
+            posterType,
+            contentId: content._id.toString(),
+            imageUrl: publicUrl,
+            caption: content.caption,
+          });
+        }
+      } catch (socketErr) {
+        logger.warn("[welcomePoster.worker] socket emit failed", { error: socketErr.message });
+      }
+
       logger.info("[welcomePoster.worker] done", {
         businessId,
         posterType,

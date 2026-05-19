@@ -3,6 +3,7 @@ const env = require("./config/env");
 const { connectDb } = require("./config/db");
 const { seedAdmin } = require("./config/seedAdmin");
 const logger = require("./core/logger");
+const { initSocket } = require("./core/socket");
 const subscriptionSyncJob = require("./jobs/subscriptionSync.job");
 const postPublisherJob = require("./jobs/postPublisher.job");
 const seoRefreshJob = require("./jobs/seoRefresh.job");
@@ -72,9 +73,10 @@ const startServer = async () => {
       logger.info("Redis not available — poster pipeline disabled. Start Redis to enable poster generation.");
     }
 
-    app.listen(env.port, () => {
+    const httpServer = app.listen(env.port, () => {
       logger.info(`Server listening on port ${env.port}`);
     });
+    initSocket(httpServer);
   } catch (error) {
     logger.error("Failed to start server", {
       message: error.message,

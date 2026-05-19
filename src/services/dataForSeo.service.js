@@ -117,7 +117,9 @@ async function submitAndPollTask(postPath, getPath, payload) {
       return resultTask.result;
     }
 
-    if (resultTask.status_code >= 40000) {
+    // 40602 = Task In Queue, 40601 = Task Created — keep polling
+    const POLL_CONTINUE_CODES = [20100, 40601, 40602];
+    if (!POLL_CONTINUE_CODES.includes(resultTask.status_code) && resultTask.status_code >= 40000) {
       throw new DataForSEOTaskError(
         `DataForSEO task failed: ${resultTask.status_message || "unknown"} (code: ${resultTask.status_code})`,
         taskId
@@ -197,13 +199,15 @@ async function submitAndPollMultipleTasks(postPath, getPath, payload) {
         break;
       }
 
-      if (resultTask.status_code >= 40000) {
+      // 40602 = Task In Queue, 40601 = Task Created — keep polling
+      const POLL_CONTINUE_CODES = [20100, 40601, 40602];
+      if (!POLL_CONTINUE_CODES.includes(resultTask.status_code) && resultTask.status_code >= 40000) {
         logger.warn("DataForSEO task failed", {
           taskId: entry.taskId,
           statusCode: resultTask.status_code,
           message: resultTask.status_message,
         });
-        completed = true; // failed, don't keep polling
+        completed = true; // actual failure, stop polling
         break;
       }
     }
@@ -281,20 +285,17 @@ async function getKeywordVolumes(keywords, locationName) {
     `getKeywordVolumes(${locationName})`
   );
 
-  // Parse the result — flatten items from all result entries (Bug 2 fix)
+  // Parse the result — DataForSEO returns a flat array of keyword objects directly
   const volumeData = [];
   const resultArray = Array.isArray(result) ? result : [];
 
-  for (const entry of resultArray) {
-    const items = entry?.items || [];
-    for (const item of items) {
-      if (item?.keyword) {
-        volumeData.push({
-          keyword: item.keyword,
-          monthlyVolume: item.search_volume || 0,
-          competition: item.competition || null,
-        });
-      }
+  for (const item of resultArray) {
+    if (item?.keyword) {
+      volumeData.push({
+        keyword: item.keyword,
+        monthlyVolume: item.search_volume || 0,
+        competition: item.competition || null,
+      });
     }
   }
 

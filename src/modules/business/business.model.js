@@ -173,11 +173,18 @@ const businessSchema = new mongoose.Schema(
             enum: ["google_trends", "template", null],
             default: null,
           },
+          group: { type: String, default: null },
+          groupType: {
+            type: String,
+            enum: ["category", "subcategory", null],
+            default: null,
+          },
           updatedAt: { type: Date, default: null },
         },
       ],
       lastKeywordRefresh: { type: Date, default: null },
       lastRankRefresh: { type: Date, default: null },
+      seoRefreshStartedAt: { type: Date, default: null },
       status: {
         type: String,
         enum: ["pending", "keywords_ready", "ready", "error"],

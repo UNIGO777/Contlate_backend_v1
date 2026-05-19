@@ -587,8 +587,10 @@ const completeSetup = async (userId, payload) => {
 
   // Trigger SEO data fetch (fire-and-forget) — fetches keywords + rank for all users
   // Guard: skip if SEO was already triggered (idempotency for retry calls)
+  // Note: seo subdocument may be undefined for older businesses — treat that as "not triggered"
+  const seoStatus = business.seo?.status;
   const seoAlreadyTriggered =
-    business.seo?.status !== "pending" || (business.seo?.keywords?.length || 0) > 0;
+    seoStatus && seoStatus !== "pending" || (business.seo?.keywords?.length || 0) > 0;
   if (!seoAlreadyTriggered && business.category && business.addressDetails?.city) {
     seoService.refreshBusinessSEO(business._id).catch((seoErr) => {
       logger.warn("[completeSetup] SEO refresh failed (will retry on next cron)", {
