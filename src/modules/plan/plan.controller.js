@@ -88,7 +88,8 @@ const triggerGenerate = asyncHandler(async (req, res) => {
   logger.info("[planGeneration] Generating 28-day plan", { userId: String(userId) });
   let concepts;
   try {
-    concepts = await generatePlanConcepts(business, offers);
+    const country = business.addressDetails?.country || "";
+    concepts = await generatePlanConcepts(business, offers, cycleStartDate, country);
   } catch (err) {
     logger.error("[planGeneration] AI generation failed", { error: err.message });
     throw new ApiError(500, "Failed to generate plan concepts. Please try again.");

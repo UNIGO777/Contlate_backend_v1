@@ -3,6 +3,7 @@ const ApiError = require("../../core/ApiError");
 const asyncHandler = require("../../core/asyncHandler");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const gbpOAuthService = require("../../services/gbpOAuth.service");
+const aiSeoService = require("../ai-seo/aiSeo.service");
 const logger = require("../../core/logger");
 
 /**
@@ -75,6 +76,11 @@ const handleCallback = asyncHandler(async (req, res) => {
 
   // If single location: fully connected. If multiple: need picker.
   if (result.autoConnected) {
+    // Auto-trigger AI keyword generation in background
+    aiSeoService.generateKeywords(req.user.id, req.business._id).catch((err) => {
+      logger.warn("[gbp] auto AI SEO generation failed", { error: err.message });
+    });
+
     return res.status(200).json(
       new ApiResponse(200, {
         connected: true,
@@ -120,6 +126,11 @@ const selectLocation = asyncHandler(async (req, res) => {
     businessId: req.business._id,
     locationId: gbpAccount.gbpLocationId,
     locationName: gbpAccount.gbpLocationName,
+  });
+
+  // Auto-trigger AI keyword generation in background
+  aiSeoService.generateKeywords(req.user.id, req.business._id).catch((err) => {
+    logger.warn("[gbp] auto AI SEO generation after location select failed", { error: err.message });
   });
 
   return res.status(200).json(

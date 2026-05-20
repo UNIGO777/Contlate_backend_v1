@@ -1,6 +1,8 @@
 const Business = require("../modules/business/business.model");
 const User = require("../modules/user/user.model");
 const SeoKeywordCache = require("../modules/seo/seoKeywordCache.model");
+const AiSeo = require("../modules/ai-seo/aiSeo.model");
+const aiSeoService = require("../modules/ai-seo/aiSeo.service");
 const { PLANS } = require("../constants/plans");
 const googleTrendsService = require("../services/googleTrends.service");
 const dataForSeoService = require("../services/dataForSeo.service");
@@ -201,6 +203,58 @@ async function runWeeklyRankRefresh() {
   return results;
 }
 
+// ─── AI SEO Monthly Rank Refresh ───────────────────────────────────────────
+// Only for Advanced plan users with active (non-completed) keyword cycles.
+// Runs on the 1st of every month alongside the existing keyword refresh.
+
+async function runAiSeoMonthlyRefresh() {
+  // Find all AI SEO records that are ready, not at month 3, and stale (>25 days)
+  const staleCutoff = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000);
+  const records = await AiSeo.find({
+    status: "ready",
+    currentMonth: { $lt: 3 },
+    $or: [
+      { lastRefreshedAt: { $lte: staleCutoff } },
+      { lastRefreshedAt: null },
+    ],
+  }).select("businessId userId");
+
+  if (records.length === 0) {
+    logger.info("[seoRefresh] ai-seo monthly — no records to refresh");
+    return { refreshed: 0, failed: 0 };
+  }
+
+  // Filter to Advanced plan users only
+  const advancedRecords = [];
+  for (const rec of records) {
+    const user = await User.findById(rec.userId).select("plan");
+    if (user && user.plan === PLANS.ADVANCED) {
+      advancedRecords.push(rec);
+    }
+  }
+
+  if (advancedRecords.length === 0) {
+    logger.info("[seoRefresh] ai-seo monthly — no Advanced users to refresh");
+    return { refreshed: 0, failed: 0 };
+  }
+
+  logger.info(`[seoRefresh] ai-seo monthly — ${advancedRecords.length} Advanced users to refresh`);
+
+  const results = await processInBatches(
+    advancedRecords,
+    async (rec) => {
+      await aiSeoService.refreshKeywords(rec.businessId);
+      logger.info("[seoRefresh] ai-seo monthly — refreshed", {
+        businessId: rec.businessId,
+      });
+    },
+    "ai-seo monthly"
+  );
+
+  logger.info("[seoRefresh] ai-seo monthly refresh complete", results);
+  return results;
+}
+
 // ─── Scheduler ──────────────────────────────────────────────────────────────
 // Runs hourly, checks if it's time for monthly or weekly refresh.
 // Uses IST (UTC+5:30) for schedule matching.
@@ -232,6 +286,7 @@ async function monthlyTick() {
 
     lastMonthlyRun = today;
     await runMonthlyKeywordRefresh();
+    await runAiSeoMonthlyRefresh();
   } catch (err) {
     logger.error("[seoRefresh] monthly tick error", {
       message: err.message,
@@ -292,4 +347,5 @@ module.exports = {
   stop,
   runMonthlyKeywordRefresh,
   runWeeklyRankRefresh,
+  runAiSeoMonthlyRefresh,
 };

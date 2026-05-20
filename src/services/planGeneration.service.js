@@ -31,22 +31,43 @@ STRICT RULES (never break these):
 5. Each title must be short (2–5 words), punchy, and unique across all 26 days.
 6. Each description must be 1–2 sentences that give the AI image generator clear direction.
 7. Return ONLY valid JSON — an array of exactly 26 objects. No markdown. No preamble.
+8. You will receive the exact date for each day and the user's country.
+   If any national holiday, festival, or well-known occasion falls on a day,
+   make that day's post occasion-themed while connecting it to the business.
+   Examples:
+   - Day on Aug 15 + country India → "Independence Day Special" — celebrate the occasion while promoting the business.
+   - Day on Dec 25 → "Christmas Cheer" — festive post related to the business.
+   - Day on Diwali → "Diwali Celebration" — festive offer or greeting tied to the business.
+   Only use real, widely celebrated occasions for that country. Do NOT force occasions where there are none.
 
 JSON format (Days 3–28):
 [
-  { "day": 3, "title": "...", "description": "..." },
+  { "day": 3, "date": "YYYY-MM-DD", "title": "...", "description": "..." },
   ...
-  { "day": 28, "title": "...", "description": "..." }
+  { "day": 28, "date": "YYYY-MM-DD", "title": "...", "description": "..." }
 ]`;
 
 // ── Build user prompt from business data ──────────────────────────────────────
-function buildUserPrompt(business, offers) {
+function buildUserPrompt(business, offers, cycleStartDate, country) {
   const lines = [];
 
   lines.push(`Business name: ${business.businessName}`);
   if (business.category) lines.push(`Category: ${business.category}`);
   if (business.subcategories?.length) lines.push(`Specialties: ${business.subcategories.join(", ")}`);
   if (business.description?.trim()) lines.push(`About: ${business.description.trim()}`);
+  lines.push(`Country: ${country || "Unknown"}`);
+
+  // Add actual dates for each of the 28 days so GPT can plan around occasions
+  if (cycleStartDate) {
+    lines.push("\nContent calendar dates (post dates):");
+    for (let day = 1; day <= 28; day++) {
+      const d = new Date(cycleStartDate);
+      d.setDate(d.getDate() + day + 1); // +day for generation, +1 for post day
+      const dateStr = d.toISOString().split("T")[0];
+      const label = day <= 2 ? " (fixed — skip)" : "";
+      lines.push(`  Day ${day} (${dateStr})${label}`);
+    }
+  }
 
   if (!offers) {
     lines.push("\nBusiness type: unknown — use general service-business content.");
@@ -155,14 +176,14 @@ function fillMissingDays(concepts) {
 }
 
 // ── Main: call OpenAI and return full 28 concepts ─────────────────────────────
-async function generatePlanConcepts(business, offers) {
+async function generatePlanConcepts(business, offers, cycleStartDate, country) {
   if (!env.openai.apiKey) {
     logger.warn("[planGeneration] OPENAI_API_KEY not set — using fallback concepts.");
     const fallback = fillMissingDays([]);
     return [...FIXED_DAYS, ...fallback];
   }
 
-  const userPrompt = buildUserPrompt(business, offers);
+  const userPrompt = buildUserPrompt(business, offers, cycleStartDate, country);
 
   const body = {
     model: env.openai.model || "gpt-4o-mini",

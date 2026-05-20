@@ -4,6 +4,7 @@ const validateMiddleware = require("../../middlewares/validate.middleware");
 const businessController = require("./business.controller");
 const seoRoutes = require("../seo/seo.routes");
 const gbpRoutes = require("../seo/gbp.routes");
+const aiSeoRoutes = require("../ai-seo/aiSeo.routes");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -92,5 +93,8 @@ router.use("/seo", seoRoutes);
 
 // GBP sub-routes: /business/gbp/*
 router.use("/gbp", gbpRoutes);
+
+// AI SEO sub-routes: /business/ai-seo/*
+router.use("/ai-seo", aiSeoRoutes);
 
 module.exports = router;
