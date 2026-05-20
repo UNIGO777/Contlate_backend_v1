@@ -104,6 +104,13 @@ const env = {
     oauthStateSecret: process.env.META_OAUTH_STATE_SECRET || process.env.JWT_SECRET,
   },
 
+  linkedin: {
+    clientId:     process.env.LINKEDIN_CLIENT_ID     || "",
+    clientSecret: process.env.LINKEDIN_CLIENT_SECRET || "",
+    redirectUri:  process.env.LINKEDIN_REDIRECT_URI  || "http://localhost:5000/api/v1/social/oauth/linkedin/callback",
+    oauthStateSecret: process.env.LINKEDIN_OAUTH_STATE_SECRET || process.env.JWT_SECRET,
+  },
+
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || "",
     keySecret: process.env.RAZORPAY_KEY_SECRET || "",

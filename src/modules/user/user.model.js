@@ -50,6 +50,16 @@ const userSchema = new mongoose.Schema(
     lockedUntil: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
+    expoPushTokens: {
+      type: [
+        {
+          token: { type: String, required: true },
+          device: { type: String, default: null },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
     deletedAt: { type: Date, default: null, index: true },
     suspendedAt: { type: Date, default: null },
   },

@@ -15,6 +15,7 @@ const posterRoutes = require("../modules/poster/poster.routes");
 const productPosterRoutes = require("../modules/product-poster/productPoster.routes");
 const adminRoutes = require("../modules/admin/admin.routes");
 const notificationRoutes = require("../modules/notification/notification.routes");
+const planRoutes = require("../modules/plan/plan.routes");
 
 const router = express.Router();
 
@@ -50,5 +51,6 @@ router.use("/poster", posterRoutes);
 router.use("/product-poster", productPosterRoutes);
 router.use("/admin", adminRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/plan", planRoutes);
 
 module.exports = router;

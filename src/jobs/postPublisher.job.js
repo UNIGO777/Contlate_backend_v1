@@ -3,9 +3,11 @@ const { SCHEDULE_STATUS } = require("../constants/scheduleStatus");
 const { CONTENT_STATUS } = require("../constants/contentStatus");
 const Schedule = require("../modules/schedule/schedule.model");
 const Content = require("../modules/content/content.model");
+const ContentPlan = require("../modules/poster/contentPlan.model");
 const SocialAccount = require("../modules/social/social.model");
 const socialService = require("../services/social.service");
 const usageService = require("../modules/usage/usage.service");
+const { sendAppNotification } = require("../utils/notifications");
 const JobLog = require("./jobLog.model");
 
 const JOB_TYPE = "postPublisher";
@@ -90,6 +92,35 @@ const processOne = async (schedule) => {
     await content.save();
   }
 
+  // ── Mark the ContentPlan day as posted ─────────────────────────────────
+  const now = new Date();
+  const planUpdate = await ContentPlan.findOneAndUpdate(
+    { "days.contentId": content._id },
+    {
+      $set: {
+        "days.$.planStatus": "posted",
+        "days.$.posted": true,
+        "days.$.postedAt": now,
+      },
+    },
+    { new: true }
+  );
+
+  if (planUpdate) {
+    const day = planUpdate.days.find(
+      (d) => d.contentId && d.contentId.toString() === content._id.toString()
+    );
+
+    // Emit socket event so frontend updates in real-time
+    _emitDayPosted(planUpdate.businessId, day?.dayNumber, content.imageUrl || "");
+
+    // Notify user: post is live
+    sendAppNotification(schedule.userId, "POSTER_POSTED", {
+      dayNumber: day?.dayNumber,
+      platform: account.platform,
+    });
+  }
+
   // Queue poster cleanup if this content has a local image file
   if (content.localImagePath && !content.localImageDeleted) {
     try {
@@ -118,6 +149,22 @@ const processOne = async (schedule) => {
     }
   }
 };
+
+function _emitDayPosted(businessId, dayNumber, imageUrl) {
+  try {
+    const { getIO } = require("../core/socket");
+    const io = getIO();
+    if (!io || !dayNumber) return;
+    io.to(`business:${businessId}`).emit("plan:day-posted", {
+      businessId: String(businessId),
+      dayNumber,
+      imageUrl,
+      planStatus: "posted",
+    });
+  } catch (err) {
+    logger.warn("[postPublisher] socket emit failed", { error: err.message });
+  }
+}
 
 const runOnce = async () => {
   const now = new Date();

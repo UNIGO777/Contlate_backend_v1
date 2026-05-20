@@ -19,4 +19,8 @@ router.patch(
 router.patch("/me/email", validateMiddleware(validateChangeEmail), userController.changeEmail);
 router.delete("/me", userController.deleteMe);
 
+// ── Push notification token ──────────────────────────────────────────────────
+router.post("/me/push-token", userController.registerPushToken);
+router.delete("/me/push-token", userController.removePushToken);
+
 module.exports = router;

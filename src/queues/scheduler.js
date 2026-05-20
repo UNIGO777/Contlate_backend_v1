@@ -33,21 +33,15 @@ const runOnce = async () => {
   ]);
 };
 
-// ── 1. Generate poster images for tomorrow ──
+// ── 1. Safety net: queue image jobs for prompt-ready days past their scheduledGenerationAt ──
+// The worker chain normally handles this; this catches failures/stuck days.
 const generateTomorrowImages = async (now) => {
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStart = new Date(tomorrow.toISOString().split("T")[0]);
-  const tomorrowEnd = new Date(tomorrowStart);
-  tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
-
   const plans = await ContentPlan.find({
     status: "active",
     "days": {
       $elemMatch: {
-        date: { $gte: tomorrowStart, $lt: tomorrowEnd },
-        promptStatus: { $in: ["ready", "edited"] },
-        imageStatus: "pending",
+        planStatus: "prompt_ready",
+        scheduledGenerationAt: { $lte: now },
       },
     },
   }).lean();
@@ -56,39 +50,39 @@ const generateTomorrowImages = async (now) => {
   let queued = 0;
 
   for (const plan of plans) {
-    const day = plan.days.find(
-      (d) =>
-        new Date(d.date) >= tomorrowStart &&
-        new Date(d.date) < tomorrowEnd &&
-        (d.promptStatus === "ready" || d.promptStatus === "edited") &&
-        d.imageStatus === "pending"
-    );
-    if (!day) continue;
-
-    await queues.posterImage.add(
-      `sched-image-day${day.dayNumber}-${plan.businessId}`,
-      { contentPlanId: plan._id.toString(), dayNumber: day.dayNumber }
-    );
-    queued++;
+    for (const day of plan.days) {
+      if (
+        day.planStatus === "prompt_ready" &&
+        day.scheduledGenerationAt &&
+        new Date(day.scheduledGenerationAt) <= now
+      ) {
+        // Use same dedup jobId as the worker chain — BullMQ rejects duplicates safely
+        await queues.posterImage.add(
+          `sched-image-day${day.dayNumber}-${plan.businessId}`,
+          { contentPlanId: plan._id.toString(), dayNumber: day.dayNumber },
+          { jobId: `image-${plan._id}-day${day.dayNumber}` }
+        );
+        queued++;
+      }
+    }
   }
 
-  if (queued) logger.info("[scheduler] queued tomorrow images", { count: queued });
+  if (queued) logger.info("[scheduler] queued overdue images", { count: queued });
 };
 
-// ── 2. Generate prompts 3 days ahead ──
+// ── 2. Safety net: queue prompts for concept-stage days whose image chain should have started ──
+// Catches days the chain didn't reach (e.g. previous day failed permanently).
 const generatePromptsAhead = async (now) => {
-  const target = new Date(now);
-  target.setDate(target.getDate() + 3);
-  const targetStart = new Date(target.toISOString().split("T")[0]);
-  const targetEnd = new Date(targetStart);
-  targetEnd.setDate(targetEnd.getDate() + 1);
+  // Target: days whose scheduledGenerationAt is within the next 24h and still concept
+  const horizon = new Date(now);
+  horizon.setHours(horizon.getHours() + 24);
 
   const plans = await ContentPlan.find({
     status: "active",
     "days": {
       $elemMatch: {
-        date: { $gte: targetStart, $lt: targetEnd },
-        promptStatus: "pending",
+        planStatus: "concept",
+        scheduledGenerationAt: { $lte: horizon },
       },
     },
   }).lean();
@@ -97,40 +91,39 @@ const generatePromptsAhead = async (now) => {
   let queued = 0;
 
   for (const plan of plans) {
-    const day = plan.days.find(
-      (d) =>
-        new Date(d.date) >= targetStart &&
-        new Date(d.date) < targetEnd &&
-        d.promptStatus === "pending"
-    );
-    if (!day) continue;
-
-    await queues.posterPrompt.add(
-      `sched-prompt-day${day.dayNumber}-${plan.businessId}`,
-      { contentPlanId: plan._id.toString(), dayNumber: day.dayNumber }
-    );
-    queued++;
+    for (const day of plan.days) {
+      if (
+        day.planStatus === "concept" &&
+        day.scheduledGenerationAt &&
+        new Date(day.scheduledGenerationAt) <= horizon
+      ) {
+        await queues.posterPrompt.add(
+          `sched-prompt-day${day.dayNumber}-${plan.businessId}`,
+          { contentPlanId: plan._id.toString(), dayNumber: day.dayNumber },
+          { jobId: `prompt-${plan._id}-day${day.dayNumber}` }
+        );
+        queued++;
+      }
+    }
   }
 
-  if (queued) logger.info("[scheduler] queued prompts ahead", { count: queued });
+  if (queued) logger.info("[scheduler] queued overdue prompts", { count: queued });
 };
 
 // ── 3. Auto-schedule generated posters for posting ──
+// Uses scheduledPostAt from the ContentPlan day (set at plan generation time).
+// Skips days the user declined. Only schedules if not already in Schedule collection.
 const autoSchedulePosters = async (now) => {
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStart = new Date(tomorrow.toISOString().split("T")[0]);
-  const tomorrowEnd = new Date(tomorrowStart);
-  tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
+  // Look ahead 36h to catch anything scheduled for next day
+  const horizon = new Date(now);
+  horizon.setHours(horizon.getHours() + 36);
 
-  // Find plans with ready images for tomorrow that haven't been scheduled yet
   const plans = await ContentPlan.find({
     status: "active",
     "days": {
       $elemMatch: {
-        date: { $gte: tomorrowStart, $lt: tomorrowEnd },
-        imageStatus: "ready",
-        posted: false,
+        planStatus: { $in: ["ready", "approved"] },
+        scheduledPostAt: { $gte: now, $lte: horizon },
         contentId: { $ne: null },
       },
     },
@@ -139,47 +132,43 @@ const autoSchedulePosters = async (now) => {
   let scheduled = 0;
 
   for (const plan of plans) {
-    const day = plan.days.find(
+    const candidates = plan.days.filter(
       (d) =>
-        new Date(d.date) >= tomorrowStart &&
-        new Date(d.date) < tomorrowEnd &&
-        d.imageStatus === "ready" &&
-        !d.posted &&
+        (d.planStatus === "ready" || d.planStatus === "approved") &&
+        d.scheduledPostAt &&
+        new Date(d.scheduledPostAt) >= now &&
+        new Date(d.scheduledPostAt) <= horizon &&
         d.contentId
     );
-    if (!day) continue;
 
-    // Check if already scheduled
-    const existing = await Schedule.findOne({ contentId: day.contentId });
-    if (existing) continue;
+    for (const day of candidates) {
+      // Check if already scheduled
+      const existing = await Schedule.findOne({ contentId: day.contentId });
+      if (existing) continue;
 
-    // Find connected social accounts
-    const accounts = await SocialAccount.find({
-      businessId: plan.businessId,
-      status: "connected",
-    }).lean();
-
-    if (!accounts.length) continue;
-
-    // Get business timezone for posting time
-    const business = await Business.findById(plan.businessId).lean();
-    const tz = business?.timezone || "UTC";
-
-    // Schedule for 10:00 AM in business timezone
-    const postTime = new Date(day.date);
-    postTime.setHours(10, 0, 0, 0);
-
-    for (const account of accounts) {
-      await Schedule.create({
-        userId: plan.userId,
+      // Find connected social accounts
+      const accounts = await SocialAccount.find({
         businessId: plan.businessId,
-        contentId: day.contentId,
-        socialAccountId: account._id,
-        scheduledAt: postTime,
-        timezone: tz,
-        status: "pending",
-      });
-      scheduled++;
+        status: "connected",
+      }).lean();
+
+      if (!accounts.length) continue;
+
+      const business = await Business.findById(plan.businessId).lean();
+      const tz = business?.timezone || "UTC";
+
+      for (const account of accounts) {
+        await Schedule.create({
+          userId: plan.userId,
+          businessId: plan.businessId,
+          contentId: day.contentId,
+          socialAccountId: account._id,
+          scheduledAt: new Date(day.scheduledPostAt),
+          timezone: tz,
+          status: "pending",
+        });
+        scheduled++;
+      }
     }
   }
 

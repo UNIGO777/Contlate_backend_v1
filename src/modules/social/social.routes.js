@@ -11,14 +11,20 @@ const {
 
 const router = express.Router();
 
-// OAuth callback is unauthenticated by design (Meta redirects the user's browser
-// here with a signed `state` token that we verify in the controller).
+// Unauthenticated: Meta browser-redirect callback (kept for server-side OAuth compat)
 router.get("/oauth/meta/callback", oauthController.completeMetaOAuth);
 
 router.use(authMiddleware);
 
+// ── Meta OAuth ───────────────────────────────────────────────────────────────
 // OAuth start runs before checkBusiness so the user can hit it with just an account.
 router.get("/oauth/meta/start", oauthController.startMetaOAuth);
+// Mobile-friendly exchange: WebView intercepts callback, frontend calls this with code+state
+router.post("/oauth/meta/exchange", oauthController.exchangeMetaOAuth);
+
+// ── LinkedIn OAuth ────────────────────────────────────────────────────────────
+router.get("/oauth/linkedin/start", oauthController.startLinkedInOAuth);
+router.post("/oauth/linkedin/exchange", oauthController.exchangeLinkedInOAuth);
 
 router.use(checkBusinessMiddleware);
 

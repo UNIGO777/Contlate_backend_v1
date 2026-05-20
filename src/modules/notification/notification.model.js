@@ -10,7 +10,7 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["seo_ready", "seo_error", "rank_refreshed"],
+      enum: ["seo_ready", "seo_error", "rank_refreshed", "plan_day_ready", "plan_day_posted"],
       required: true,
     },
     title: { type: String, required: true },
