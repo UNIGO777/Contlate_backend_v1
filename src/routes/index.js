@@ -36,6 +36,22 @@ router.get("/health", (_req, res) => {
 // Public — auth manages its own sub-route protection
 router.use("/auth", authRoutes);
 
+// Public — Google OAuth redirect: Google redirects here after approval/denial.
+// The system browser on mobile can't pass auth headers, so this public route
+// forwards the OAuth params to the app via deep link.
+router.get("/business/gbp/callback", (req, res, next) => {
+  // If Authorization header is present, this is an authenticated API call from the
+  // frontend — let it fall through to the normal authenticated handler.
+  if (req.headers.authorization) return next();
+
+  // Direct browser redirect from Google — forward params to the app deep link
+  const params = new URLSearchParams();
+  ["code", "state", "error", "error_description"].forEach((key) => {
+    if (req.query[key]) params.set(key, String(req.query[key]));
+  });
+  res.redirect(`postengine://gbp-callback?${params.toString()}`);
+});
+
 // All routes below require a valid, non-suspended, non-deleted account
 router.use(authMiddleware);
 router.use("/users", userRoutes);
