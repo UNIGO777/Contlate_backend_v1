@@ -10,6 +10,7 @@ const errorMiddleware = require("./middlewares/error.middleware");
 const routes = require("./routes");
 const staticRoutes = require("./modules/upload/upload.static.routes");
 const webhookRoutes = require("./modules/subscription/webhook.routes");
+const metaWebhookRoutes = require("./modules/webhook/meta.webhook");
 
 const app = express();
 
@@ -27,6 +28,8 @@ app.use(requestLogger);
 app.use("/static", staticRoutes);
 // Webhooks must read the raw body for signature verification — mount before JSON parser.
 app.use(`${env.apiPrefix}/webhooks`, webhookRoutes);
+// Meta deauthorization & permissions webhooks (public — no auth, signed by app secret)
+app.use(`${env.apiPrefix}/webhooks/meta`, metaWebhookRoutes);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));

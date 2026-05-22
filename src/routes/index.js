@@ -16,6 +16,7 @@ const productPosterRoutes = require("../modules/product-poster/productPoster.rou
 const adminRoutes = require("../modules/admin/admin.routes");
 const notificationRoutes = require("../modules/notification/notification.routes");
 const planRoutes = require("../modules/plan/plan.routes");
+const publishRoutes = require("../modules/publish/publish.routes");
 
 const router = express.Router();
 
@@ -52,6 +53,18 @@ router.get("/business/gbp/callback", (req, res, next) => {
   res.redirect(`postengine://gbp-callback?${params.toString()}`);
 });
 
+// Public — Meta OAuth redirect: Facebook/Instagram redirects here after approval/denial.
+// Same pattern as GBP — system browser can't pass auth headers, so forward to deep link.
+router.get("/social/oauth/meta/callback", (req, res, next) => {
+  if (req.headers.authorization) return next();
+
+  const params = new URLSearchParams();
+  ["code", "state", "error", "error_description"].forEach((key) => {
+    if (req.query[key]) params.set(key, String(req.query[key]));
+  });
+  res.redirect(`postengine://social-callback?${params.toString()}`);
+});
+
 // All routes below require a valid, non-suspended, non-deleted account
 router.use(authMiddleware);
 router.use("/users", userRoutes);
@@ -68,5 +81,6 @@ router.use("/product-poster", productPosterRoutes);
 router.use("/admin", adminRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/plan", planRoutes);
+router.use("/publish", publishRoutes);
 
 module.exports = router;

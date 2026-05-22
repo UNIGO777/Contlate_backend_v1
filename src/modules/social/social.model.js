@@ -56,6 +56,61 @@ const socialAccountSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+
+    // --- Page/Account metadata ---
+    pageId: { type: String, default: "" },
+    profilePictureUrl: { type: String, default: "" },
+
+    // --- Token management ---
+    userAccessToken: { type: String, default: "" },
+    tokenVersion: { type: Number, default: 0 },
+    lastTokenRefreshedAt: { type: Date, default: null },
+
+    // --- Capabilities ---
+    capabilities: {
+      canPublishPhotos: { type: Boolean, default: true },
+      canPublishVideos: { type: Boolean, default: false },
+      canPublishReels: { type: Boolean, default: false },
+      canPublishStories: { type: Boolean, default: false },
+    },
+
+    // --- Onboarding state ---
+    setupIssues: [
+      {
+        type: String,
+        enum: [
+          "no_pages",
+          "no_instagram",
+          "personal_instagram",
+          "missing_permissions",
+        ],
+      },
+    ],
+
+    // --- Health tracking ---
+    healthStatus: {
+      type: String,
+      enum: ["healthy", "warning", "critical"],
+      default: "healthy",
+      index: true,
+    },
+
+    // --- Disconnect reason (for reconnect UI) ---
+    disconnectReason: {
+      type: String,
+      enum: [
+        "user_action",
+        "token_expired",
+        "permissions_revoked",
+        "page_deleted",
+        "meta_deauth",
+        "user_deauthorized",
+        "page_deauthorized",
+        "data_deletion",
+        "data_deletion_request",
+      ],
+      default: null,
+    },
   },
   {
     timestamps: true,

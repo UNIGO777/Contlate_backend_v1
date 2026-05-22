@@ -4,6 +4,7 @@ const checkBusinessMiddleware = require("../../middlewares/checkBusiness.middlew
 const validateMiddleware = require("../../middlewares/validate.middleware");
 const socialController = require("./social.controller");
 const oauthController = require("./oauth.controller");
+const metaController = require("./meta.controller");
 const {
   validateSocialAccountPayload,
   validateSocialAccountUpdatePayload,
@@ -27,6 +28,13 @@ router.get("/oauth/linkedin/start", oauthController.startLinkedInOAuth);
 router.post("/oauth/linkedin/exchange", oauthController.exchangeLinkedInOAuth);
 
 router.use(checkBusinessMiddleware);
+
+// ── Meta Account Management ───────────────────────────────────────────────────
+router.get("/meta/pages", metaController.listPages);
+router.post("/meta/select-pages", metaController.selectPages);
+router.get("/meta/instagram-status/:pageId", metaController.getInstagramStatus);
+router.get("/meta/permissions", metaController.checkPermissions);
+router.post("/meta/refresh-token/:socialAccountId", metaController.refreshToken);
 
 router.post("/", validateMiddleware(validateSocialAccountPayload), socialController.connectSocialAccount);
 router.get("/", socialController.listMySocialAccounts);

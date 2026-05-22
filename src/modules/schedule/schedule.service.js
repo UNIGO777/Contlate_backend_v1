@@ -3,6 +3,8 @@ const { ERROR_CODES } = require("../../constants/errorCodes");
 const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
 const { CONTENT_STATUS } = require("../../constants/contentStatus");
 const { SOCIAL_ACCOUNT_STATUS } = require("../../constants/socialAccountStatus");
+const { applyStagger } = require("../../utils/scheduleStagger");
+const { getLimits } = require("../../constants/publishingLimits");
 const Content = require("../content/content.model");
 const SocialAccount = require("../social/social.model");
 const Schedule = require("./schedule.model");
@@ -14,7 +16,10 @@ const sanitize = (s) => ({
   businessId: s.businessId.toString(),
   contentId: s.contentId.toString(),
   socialAccountId: s.socialAccountId.toString(),
+  // Display the user's chosen time in the UI (not the staggered execution time)
+  userPreferredTime: s.userPreferredTime || s.scheduledAt,
   scheduledAt: s.scheduledAt,
+  staggerOffsetMinutes: s.staggerOffsetMinutes ?? 0,
   timezone: s.timezone,
   status: s.status,
   publishAttempts: s.publishAttempts,
@@ -29,6 +34,59 @@ const TERMINAL_STATUSES = new Set([
   SCHEDULE_STATUS.PUBLISHED,
   SCHEDULE_STATUS.CANCELLED,
 ]);
+
+/**
+ * Enforce per-platform posting limits before creating a schedule.
+ *   1. Max posts per calendar day (UTC) for this account.
+ *   2. Minimum time gap between consecutive posts to the same account.
+ *
+ * @param {string|ObjectId} socialAccountId
+ * @param {string} platform  — "facebook" | "instagram" | etc.
+ * @param {Date}   scheduledAt  — the EXECUTION time (staggered)
+ * @param {string} [excludeScheduleId]  — skip this schedule (used during update)
+ */
+const assertPublishingAllowed = async (socialAccountId, platform, scheduledAt, excludeScheduleId) => {
+  const limits = getLimits(platform);
+
+  // ── 1. Daily limit ────────────────────────────────────────────────────────
+  const dayStart = new Date(scheduledAt);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+  const dailyQuery = {
+    socialAccountId,
+    scheduledAt: { $gte: dayStart, $lt: dayEnd },
+    status: { $nin: [SCHEDULE_STATUS.CANCELLED] },
+  };
+  if (excludeScheduleId) dailyQuery._id = { $ne: excludeScheduleId };
+
+  const dailyCount = await Schedule.countDocuments(dailyQuery);
+  if (dailyCount >= limits.maxPerDay) {
+    throw new ApiError(429, `Daily posting limit (${limits.maxPerDay} posts/day) reached for this account.`, {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+
+  // ── 2. Minimum interval ───────────────────────────────────────────────────
+  const gapMs = limits.minIntervalMinutes * 60 * 1000;
+  const windowStart = new Date(scheduledAt.getTime() - gapMs);
+  const windowEnd   = new Date(scheduledAt.getTime() + gapMs);
+
+  const intervalQuery = {
+    socialAccountId,
+    scheduledAt: { $gte: windowStart, $lte: windowEnd },
+    status: { $nin: [SCHEDULE_STATUS.CANCELLED, SCHEDULE_STATUS.FAILED] },
+  };
+  if (excludeScheduleId) intervalQuery._id = { $ne: excludeScheduleId };
+
+  const tooClose = await Schedule.findOne(intervalQuery).lean();
+  if (tooClose) {
+    throw new ApiError(400, `Posts to the same account must be at least ${limits.minIntervalMinutes} minutes apart.`, {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+};
 
 const ensureContent = async (userId, contentId) => {
   const content = await Content.findOne({ _id: contentId, userId });
@@ -73,12 +131,23 @@ const create = async (userId, businessId, payload) => {
     });
   }
 
+  const userPreferredTime = new Date(payload.scheduledAt);
+  const { executionTime, offsetMinutes } = applyStagger(
+    userPreferredTime,
+    userId.toString(),
+    account._id.toString()
+  );
+
+  await assertPublishingAllowed(account._id, account.platform, executionTime);
+
   const schedule = await Schedule.create({
     userId,
     businessId,
     contentId: content._id,
     socialAccountId: account._id,
-    scheduledAt: payload.scheduledAt,
+    userPreferredTime,
+    scheduledAt: executionTime,
+    staggerOffsetMinutes: offsetMinutes,
     timezone: payload.timezone,
     status: SCHEDULE_STATUS.PENDING,
   });
@@ -108,12 +177,23 @@ const bulkCreate = async (userId, businessId, items) => {
         continue;
       }
 
+      const userPreferredTime = new Date(item.scheduledAt);
+      const { executionTime, offsetMinutes } = applyStagger(
+        userPreferredTime,
+        userId.toString(),
+        account._id.toString()
+      );
+
+      await assertPublishingAllowed(account._id, account.platform, executionTime);
+
       const schedule = await Schedule.create({
         userId,
         businessId,
         contentId: content._id,
         socialAccountId: account._id,
-        scheduledAt: item.scheduledAt,
+        userPreferredTime,
+        scheduledAt: executionTime,
+        staggerOffsetMinutes: offsetMinutes,
         timezone: item.timezone || "UTC",
         status: SCHEDULE_STATUS.PENDING,
       });
@@ -161,8 +241,27 @@ const update = async (userId, scheduleId, patch) => {
       code: ERROR_CODES.VALIDATION_FAILED,
     });
   }
-  if (patch.scheduledAt) s.scheduledAt = patch.scheduledAt;
+
+  if (patch.scheduledAt) {
+    const account = await SocialAccount.findById(s.socialAccountId);
+    const userPreferredTime = new Date(patch.scheduledAt);
+    const { executionTime, offsetMinutes } = applyStagger(
+      userPreferredTime,
+      userId.toString(),
+      s.socialAccountId.toString()
+    );
+    await assertPublishingAllowed(
+      s.socialAccountId,
+      account?.platform || "facebook",
+      executionTime,
+      s._id
+    );
+    s.userPreferredTime = userPreferredTime;
+    s.scheduledAt = executionTime;
+    s.staggerOffsetMinutes = offsetMinutes;
+  }
   if (patch.timezone) s.timezone = patch.timezone;
+
   await s.save();
   return sanitize(s);
 };

@@ -19,8 +19,15 @@ const sanitizeSocialAccount = (account) => ({
   status: account.status,
   tokenExpiresAt: account.tokenExpiresAt,
   lastSyncedAt: account.lastSyncedAt,
+  pageId: account.pageId || "",
+  profilePictureUrl: account.profilePictureUrl || "",
+  capabilities: account.capabilities || {},
+  setupIssues: account.setupIssues || [],
+  healthStatus: account.healthStatus || "healthy",
+  disconnectReason: account.disconnectReason || null,
   createdAt: account.createdAt,
   updatedAt: account.updatedAt,
+  // accessToken, userAccessToken, refreshToken are NEVER exposed to the frontend
 });
 
 const connectSocialAccount = async ({ userId, businessId, payload }) => {

@@ -5,10 +5,12 @@ const Schedule = require("../modules/schedule/schedule.model");
 const Content = require("../modules/content/content.model");
 const ContentPlan = require("../modules/poster/contentPlan.model");
 const SocialAccount = require("../modules/social/social.model");
+const PublishLog = require("../modules/publish/publishLog.model");
 const socialService = require("../services/social.service");
 const usageService = require("../modules/usage/usage.service");
 const { sendAppNotification } = require("../utils/notifications");
 const JobLog = require("./jobLog.model");
+const User = require("../modules/user/user.model");
 
 const JOB_TYPE = "postPublisher";
 const DEFAULT_INTERVAL_MS = 60 * 1000; // every minute
@@ -40,21 +42,69 @@ const claimNext = async (now) =>
 const computeBackoffMs = (attempts) =>
   Math.min(60 * 60 * 1000, 30 * 1000 * 2 ** Math.max(0, attempts - 1));
 
-const markFailed = async (schedule, err) => {
+// Classify Meta Graph API errors — prefer structured fields from graphFetch,
+// fall back to parsing the error message for legacy error paths.
+const extractMetaErrorCode = (err) => {
+  if (err.metaCode) return String(err.metaCode);
+  const match = err.message?.match(/\bcode[:\s]+(\d+)/i) || err.message?.match(/"code"\s*:\s*(\d+)/);
+  return match ? match[1] : "";
+};
+
+const markFailed = async (schedule, err, account) => {
   schedule.publishAttempts += 1;
   schedule.lastError = err.message?.slice(0, 500) || "Unknown error";
   schedule.lockedAt = null;
 
-  if (schedule.publishAttempts >= MAX_ATTEMPTS) {
+  const isTerminal = schedule.publishAttempts >= MAX_ATTEMPTS;
+  if (isTerminal) {
     schedule.status = SCHEDULE_STATUS.FAILED;
   } else {
-    // Schedule a retry by pushing scheduledAt forward and resetting to pending.
     schedule.status = SCHEDULE_STATUS.PENDING;
     schedule.scheduledAt = new Date(
       Date.now() + computeBackoffMs(schedule.publishAttempts)
     );
   }
   await schedule.save();
+
+  // Create publish log for this failed attempt
+  const errorCode = extractMetaErrorCode(err);
+  PublishLog.create({
+    scheduleId: schedule._id,
+    socialAccountId: schedule.socialAccountId,
+    contentId: schedule.contentId,
+    userId: schedule.userId,
+    businessId: schedule.businessId,
+    platform: account?.platform || "unknown",
+    publishType: "scheduled",
+    status: isTerminal ? "failed" : "retrying",
+    errorMessage: schedule.lastError,
+    errorCode,
+    attempt: schedule.publishAttempts,
+    executedAt: new Date(),
+  }).catch((e) => logger.warn("[postPublisher] failed to create publish log", { message: e.message }));
+
+  // Mark account as expired if token error (Meta code 190)
+  if (errorCode === "190" && account) {
+    SocialAccount.findByIdAndUpdate(account._id, {
+      $set: { status: "expired", healthStatus: "critical", disconnectReason: "token_expired" },
+    }).catch(() => {});
+  }
+
+  // Notify user only on terminal failure (all retries exhausted)
+  if (isTerminal) {
+    const notifData = {
+      platform: account?.platform || "unknown",
+      accountName: account?.accountName || "",
+      error: schedule.lastError,
+    };
+    // Fire-and-forget — fetch user for email, fall back to push-only
+    User.findById(schedule.userId).lean().then((user) => {
+      const opts = user ? { userEmail: user.email, userName: user.name } : {};
+      sendAppNotification(schedule.userId, "SCHEDULE_FAILED", notifData, opts);
+    }).catch(() => {
+      sendAppNotification(schedule.userId, "SCHEDULE_FAILED", notifData);
+    });
+  }
 };
 
 const markPublished = async (schedule, externalPostId) => {
@@ -81,6 +131,25 @@ const processOne = async (schedule) => {
   const result = await socialService.publishToSocial({ account, content });
 
   await markPublished(schedule, result.externalPostId);
+
+  // Create publish log for successful publish
+  const postUrl = result.externalPostId
+    ? `https://www.${account.platform}.com/${result.externalPostId}`
+    : "";
+  PublishLog.create({
+    scheduleId: schedule._id,
+    socialAccountId: account._id,
+    contentId: content._id,
+    userId: schedule.userId,
+    businessId: schedule.businessId,
+    platform: account.platform,
+    publishType: "scheduled",
+    status: "success",
+    externalPostId: result.externalPostId || "",
+    externalPostUrl: postUrl,
+    attempt: schedule.publishAttempts + 1,
+    executedAt: new Date(),
+  }).catch((e) => logger.warn("[postPublisher] failed to create publish log", { message: e.message }));
 
   // Track successful publish for usage analytics — never blocks the publish itself.
   await usageService
@@ -118,6 +187,12 @@ const processOne = async (schedule) => {
     sendAppNotification(schedule.userId, "POSTER_POSTED", {
       dayNumber: day?.dayNumber,
       platform: account.platform,
+    });
+  } else {
+    // Scheduled post outside a content plan — send generic publish success
+    sendAppNotification(schedule.userId, "PUBLISH_SUCCESS", {
+      platform: account.platform,
+      accountName: account.accountName,
     });
   }
 
@@ -166,9 +241,36 @@ function _emitDayPosted(businessId, dayNumber, imageUrl) {
   }
 }
 
+const sendScheduleReminders = async (now) => {
+  // Find schedules going live in the 29–31 minute window that haven't been reminded yet
+  const windowStart = new Date(now.getTime() + 29 * 60 * 1000);
+  const windowEnd   = new Date(now.getTime() + 31 * 60 * 1000);
+
+  const due = await Schedule.find({
+    status: SCHEDULE_STATUS.PENDING,
+    scheduledAt: { $gte: windowStart, $lte: windowEnd },
+    reminderSent: false,
+  }).lean();
+
+  if (!due.length) return;
+
+  // Mark all as reminded in one bulk write before firing notifications
+  const ids = due.map((s) => s._id);
+  await Schedule.updateMany({ _id: { $in: ids } }, { $set: { reminderSent: true } });
+
+  for (const schedule of due) {
+    sendAppNotification(schedule.userId, "SCHEDULE_REMINDER", { minutesLeft: 30 });
+  }
+};
+
 const runOnce = async () => {
   const now = new Date();
   await releaseStaleLocks(now);
+
+  // Send 30-minute reminders (non-blocking — errors don't abort publish loop)
+  sendScheduleReminders(now).catch((e) =>
+    logger.warn("[postPublisher] reminder check failed", { message: e.message })
+  );
 
   let processed = 0;
   let failed = 0;
@@ -186,7 +288,9 @@ const runOnce = async () => {
         scheduleId: schedule._id.toString(),
         message: err.message,
       });
-      await markFailed(schedule, err).catch((saveErr) =>
+      // Try to load the account for error classification (token expiry etc.)
+      const acct = await SocialAccount.findById(schedule.socialAccountId).catch(() => null);
+      await markFailed(schedule, err, acct).catch((saveErr) =>
         logger.error("[postPublisher] failed to record failure", {
           scheduleId: schedule._id.toString(),
           message: saveErr.message,

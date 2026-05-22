@@ -3,6 +3,7 @@ const ApiError = require("../../core/ApiError");
 const asyncHandler = require("../../core/asyncHandler");
 const { SOCIAL_PLATFORMS } = require("../../constants/socialPlatforms");
 const { SOCIAL_ACCOUNT_STATUS } = require("../../constants/socialAccountStatus");
+const { encrypt } = require("../../core/tokenEncryption");
 const metaService = require("../../services/meta.service");
 const linkedinService = require("../../services/linkedin.service");
 const Business = require("../business/business.model");
@@ -39,8 +40,12 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
     ? new Date(Date.now() + long.expiresIn * 1000)
     : null;
 
+  const encryptedUserToken = encrypt(long.accessToken);
+
   const upserts = [];
   for (const page of pages) {
+    const encryptedPageToken = encrypt(page.pageAccessToken);
+
     upserts.push(
       SocialAccount.findOneAndUpdate(
         { userId, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
@@ -51,10 +56,16 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
             platform: SOCIAL_PLATFORMS.FACEBOOK,
             accountName: page.pageName,
             accountId: page.pageId,
-            accessToken: page.pageAccessToken,
+            accessToken: encryptedPageToken,
+            userAccessToken: encryptedUserToken,
+            pageId: page.pageId,
             tokenExpiresAt,
+            tokenVersion: 1,
             status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+            healthStatus: "healthy",
+            disconnectReason: null,
             lastSyncedAt: new Date(),
+            lastTokenRefreshedAt: new Date(),
           },
         },
         { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
@@ -76,10 +87,16 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
               platform: SOCIAL_PLATFORMS.INSTAGRAM,
               accountName: page.instagramUsername || page.pageName,
               accountId: page.instagramAccountId,
-              accessToken: page.pageAccessToken,
+              accessToken: encryptedPageToken,
+              userAccessToken: encryptedUserToken,
+              pageId: page.pageId,
               tokenExpiresAt,
+              tokenVersion: 1,
               status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+              healthStatus: "healthy",
+              disconnectReason: null,
               lastSyncedAt: new Date(),
+              lastTokenRefreshedAt: new Date(),
             },
           },
           { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
@@ -89,6 +106,11 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
   }
 
   const accounts = await Promise.all(upserts);
+
+  // Subscribe each page to webhooks (fire-and-forget — non-fatal if it fails)
+  for (const page of pages) {
+    metaService.subscribePageToWebhooks(page.pageId, page.pageAccessToken).catch(() => {});
+  }
 
   return res.status(200).json(
     new ApiResponse(
@@ -108,14 +130,18 @@ const completeMetaOAuth = asyncHandler(async (req, res) => {
 });
 
 // ── POST /social/oauth/meta/exchange ────────────────────────────────────────
-// Authenticated: frontend WebView intercepts the callback URL, extracts code+state,
-// then calls this endpoint directly with the user's auth token.
+// Authenticated: system browser deep link returns code+state, frontend calls this.
+// Instead of auto-connecting all pages, stores the user token and returns the pages
+// list so the frontend can navigate to the page picker.
 const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   const { code, state } = req.body;
 
   if (!code || !state) throw new ApiError(400, "Missing code or state.");
 
-  const { userId } = metaService.verifyState(state);
+  const { userId: stateUserId } = metaService.verifyState(state);
+  if (stateUserId !== req.user._id.toString()) {
+    throw new ApiError(400, "OAuth state does not match current user.");
+  }
 
   const business = await Business.findOne({ userId: req.user._id });
   if (!business) {
@@ -130,63 +156,132 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
     ? new Date(Date.now() + long.expiresIn * 1000)
     : null;
 
-  const upserts = [];
-  for (const page of pages) {
-    upserts.push(
-      SocialAccount.findOneAndUpdate(
-        { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
-        {
-          $set: {
-            userId: req.user._id,
-            businessId: business._id,
-            platform: SOCIAL_PLATFORMS.FACEBOOK,
-            accountName: page.pageName,
-            accountId: page.pageId,
-            accessToken: page.pageAccessToken,
-            tokenExpiresAt,
-            status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
-            lastSyncedAt: new Date(),
-          },
-        },
-        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
-      )
-    );
+  const encryptedUserToken = encrypt(long.accessToken);
 
-    if (page.instagramAccountId) {
+  // If single page (or zero), auto-connect like before for simplicity
+  if (pages.length <= 1) {
+    const upserts = [];
+    for (const page of pages) {
+      const encryptedPageToken = encrypt(page.pageAccessToken);
+
       upserts.push(
         SocialAccount.findOneAndUpdate(
-          { userId: req.user._id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
+          { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
           {
             $set: {
               userId: req.user._id,
               businessId: business._id,
-              platform: SOCIAL_PLATFORMS.INSTAGRAM,
-              accountName: page.instagramUsername || page.pageName,
-              accountId: page.instagramAccountId,
-              accessToken: page.pageAccessToken,
+              platform: SOCIAL_PLATFORMS.FACEBOOK,
+              accountName: page.pageName,
+              accountId: page.pageId,
+              accessToken: encryptedPageToken,
+              userAccessToken: encryptedUserToken,
+              pageId: page.pageId,
               tokenExpiresAt,
+              tokenVersion: 1,
               status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+              healthStatus: "healthy",
+              disconnectReason: null,
               lastSyncedAt: new Date(),
+              lastTokenRefreshedAt: new Date(),
             },
           },
           { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
         )
       );
+
+      if (page.instagramAccountId) {
+        upserts.push(
+          SocialAccount.findOneAndUpdate(
+            { userId: req.user._id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
+            {
+              $set: {
+                userId: req.user._id,
+                businessId: business._id,
+                platform: SOCIAL_PLATFORMS.INSTAGRAM,
+                accountName: page.instagramUsername || page.pageName,
+                accountId: page.instagramAccountId,
+                accessToken: encryptedPageToken,
+                userAccessToken: encryptedUserToken,
+                pageId: page.pageId,
+                tokenExpiresAt,
+                tokenVersion: 1,
+                status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+                healthStatus: "healthy",
+                disconnectReason: null,
+                lastSyncedAt: new Date(),
+                lastTokenRefreshedAt: new Date(),
+              },
+            },
+            { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
+          )
+        );
+      }
     }
+
+    const accounts = await Promise.all(upserts);
+
+    // Subscribe pages to webhooks (fire-and-forget)
+    for (const page of pages) {
+      metaService.subscribePageToWebhooks(page.pageId, page.pageAccessToken).catch(() => {});
+    }
+
+    return res.status(200).json(
+      new ApiResponse(200, {
+        needsPagePicker: false,
+        connected: accounts.length,
+        accounts: accounts.map((a) => ({
+          id: a._id.toString(),
+          platform: a.platform,
+          accountName: a.accountName,
+          accountId: a.accountId,
+        })),
+        pages: [],
+        setupIssues: pages.length === 0 ? ["no_pages"] : [],
+      }, pages.length === 0 ? "No Facebook Pages found." : "Meta accounts connected.")
+    );
   }
 
-  const accounts = await Promise.all(upserts);
+  // Multiple pages — store user token on a temporary placeholder account
+  // so the select-pages endpoint can retrieve it, then return pages list.
+  // We upsert a single FB account to hold the user token.
+  await SocialAccount.findOneAndUpdate(
+    { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: pages[0].pageId },
+    {
+      $set: {
+        userId: req.user._id,
+        businessId: business._id,
+        platform: SOCIAL_PLATFORMS.FACEBOOK,
+        accountName: pages[0].pageName,
+        accountId: pages[0].pageId,
+        accessToken: encrypt(pages[0].pageAccessToken),
+        userAccessToken: encryptedUserToken,
+        pageId: pages[0].pageId,
+        tokenExpiresAt,
+        tokenVersion: 1,
+        status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+        healthStatus: "healthy",
+        lastSyncedAt: new Date(),
+        lastTokenRefreshedAt: new Date(),
+      },
+    },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
 
   return res.status(200).json(
     new ApiResponse(200, {
-      connected: accounts.length,
-      accounts: accounts.map((a) => ({
-        id: a._id.toString(),
-        platform: a.platform,
-        accountName: a.accountName,
-        accountId: a.accountId,
+      needsPagePicker: true,
+      connected: 0,
+      accounts: [],
+      pages: pages.map((p) => ({
+        pageId: p.pageId,
+        pageName: p.pageName,
+        instagramAccountId: p.instagramAccountId || null,
+        instagramUsername: p.instagramUsername || null,
+        hasInstagram: !!p.instagramAccountId,
       })),
-    }, "Meta accounts connected.")
+      setupIssues: [],
+    }, "Multiple pages found. Select which pages to connect.")
   );
 });
 
@@ -227,11 +322,15 @@ const exchangeLinkedInOAuth = asyncHandler(async (req, res) => {
         platform: SOCIAL_PLATFORMS.LINKEDIN,
         accountName: profile.name,
         accountId: profile.sub,
-        accessToken,
+        accessToken: encrypt(accessToken),
         refreshToken: authorUrn, // store authorUrn in refreshToken field for publishing
         tokenExpiresAt,
+        tokenVersion: 1,
         status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+        healthStatus: "healthy",
+        disconnectReason: null,
         lastSyncedAt: new Date(),
+        lastTokenRefreshedAt: new Date(),
       },
     },
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }

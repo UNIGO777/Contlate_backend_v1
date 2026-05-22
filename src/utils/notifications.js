@@ -17,6 +17,7 @@
 const logger = require("../core/logger");
 const Notification = require("../modules/notification/notification.model");
 const { sendPushNotification } = require("../services/pushNotification.service");
+const { send: sendEmail } = require("../services/mail.service");
 
 // ── Message templates ──────────────────────────────────────────────────────────
 const TEMPLATES = {
@@ -60,6 +61,46 @@ const TEMPLATES = {
     title: "Time to update your offers",
     body: "Your plan renews soon. Want to add new offers this month?",
   }),
+  SOCIAL_ACCOUNT_EXPIRED: ({ platform, accountName }) => ({
+    notifType: "account_expired",
+    title: "Social account disconnected",
+    body: `Your ${accountName || platform} account needs to be reconnected to continue publishing.`,
+    emailTemplate: "account_expired",
+  }),
+  PUBLISH_SUCCESS: ({ platform, accountName }) => ({
+    notifType: "publish_success",
+    title: "Post is live! ✅",
+    body: `Your post went live${accountName ? ` on ${accountName}` : platform ? ` on ${platform}` : ""}.`,
+  }),
+  PUBLISH_FAILED: ({ platform, accountName, error }) => ({
+    notifType: "publish_failed",
+    title: "Post failed to publish",
+    body: `Could not publish to ${accountName || platform || "your account"}. ${error ? error.slice(0, 100) : ""}`.trim(),
+    emailTemplate: "publish_failed",
+  }),
+  ACCOUNT_DISCONNECTED: ({ platform, accountName }) => ({
+    notifType: "account_disconnected",
+    title: "Account disconnected",
+    body: `Your ${accountName || platform} account was disconnected. Reconnect to resume publishing.`,
+    emailTemplate: "account_disconnected",
+  }),
+  PERMISSIONS_REVOKED: ({ platform, accountName }) => ({
+    notifType: "permissions_revoked",
+    title: "Permissions revoked",
+    body: `Access was revoked for ${accountName || platform}. Reconnect and grant permissions to continue.`,
+    emailTemplate: "permissions_revoked",
+  }),
+  SCHEDULE_REMINDER: ({ minutesLeft }) => ({
+    notifType: "schedule_reminder",
+    title: "Post going live soon ⏰",
+    body: `One of your scheduled posts goes live in ${minutesLeft || 30} minutes.`,
+  }),
+  SCHEDULE_FAILED: ({ platform, accountName, error }) => ({
+    notifType: "schedule_failed",
+    title: "Scheduled post failed",
+    body: `Your scheduled post to ${accountName || platform || "your account"} failed after multiple attempts.`,
+    emailTemplate: "publish_failed",
+  }),
   GENERAL: ({ title, body }) => ({
     notifType: "plan_day_ready",
     title: title ?? "Postly",
@@ -71,9 +112,12 @@ const TEMPLATES = {
  * @param {string|ObjectId} userId
  * @param {keyof TEMPLATES} type
  * @param {object} data  — template-specific fields
+ * @param {object} [opts]
+ * @param {string} [opts.userEmail]  — if provided, sends email for templates that have emailTemplate
+ * @param {string} [opts.userName]
  * @returns {Promise<void>}  — never throws; logs on failure
  */
-const sendAppNotification = async (userId, type, data = {}) => {
+const sendAppNotification = async (userId, type, data = {}, opts = {}) => {
   const templateFn = TEMPLATES[type];
   if (!templateFn) {
     logger.warn("[notifications] unknown type", { type });
@@ -107,6 +151,17 @@ const sendAppNotification = async (userId, type, data = {}) => {
   }).catch((e) =>
     logger.warn("[notifications] push failed", { error: e.message })
   );
+
+  // ── Email (only for critical events that have a template + a recipient) ───
+  if (msg.emailTemplate && opts.userEmail) {
+    sendEmail({
+      to: opts.userEmail,
+      template: msg.emailTemplate,
+      data: { name: opts.userName || "there", ...data },
+    }).catch((e) =>
+      logger.warn("[notifications] email failed", { template: msg.emailTemplate, error: e.message })
+    );
+  }
 };
 
 module.exports = { sendAppNotification };

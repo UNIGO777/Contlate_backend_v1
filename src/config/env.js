@@ -28,6 +28,7 @@ const env = {
   port: toInt(process.env.PORT, 5000),
   apiPrefix: process.env.API_PREFIX || "/api/v1",
   corsOrigin: process.env.CORS_ORIGIN || "*",
+  appUrl: process.env.APP_URL || "http://localhost:5000",
 
   mongodbUri: process.env.MONGODB_URI,
 
@@ -102,6 +103,8 @@ const env = {
       "http://localhost:5000/api/v1/social/oauth/meta/callback",
     graphVersion: process.env.META_GRAPH_VERSION || "v21.0",
     oauthStateSecret: process.env.META_OAUTH_STATE_SECRET || process.env.JWT_SECRET,
+    // Verify token you enter in the Meta App Dashboard when subscribing to webhooks
+    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || "postengine-meta-webhook",
   },
 
   linkedin: {

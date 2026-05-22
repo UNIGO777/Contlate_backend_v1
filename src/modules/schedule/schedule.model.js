@@ -27,6 +27,16 @@ const scheduleSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // What the user actually selected — displayed in UI (never adjusted)
+    userPreferredTime: {
+      type: Date,
+      default: null,
+    },
+    // Actual execution time = userPreferredTime + stagger offset (stored in scheduledAt)
+    staggerOffsetMinutes: {
+      type: Number,
+      default: 0,
+    },
     scheduledAt: {
       type: Date,
       required: true,
@@ -64,6 +74,10 @@ const scheduleSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
+    },
+    reminderSent: {
+      type: Boolean,
+      default: false,
     },
   },
   {

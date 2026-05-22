@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const env = require("../config/env");
 const ApiError = require("../core/ApiError");
 const logger = require("../core/logger");
+const { decrypt } = require("../core/tokenEncryption");
 
 const SCOPES = [
   "pages_show_list",
@@ -67,18 +68,48 @@ const getAuthorizeUrl = (userId) => {
   return { url: url.toString(), state };
 };
 
-const graphFetch = async (path, { method = "GET", searchParams, body } = {}) => {
+// ── Meta Graph API error codes ────────────────────────────────────────────────
+// https://developers.facebook.com/docs/graph-api/guides/error-handling
+const META_ERROR_MESSAGES = {
+  190: "Access token expired or revoked. Please reconnect your account.",
+  200: "Missing required permission. Please reconnect and grant all permissions.",
+  100: "Invalid parameter sent to Meta Graph API.",
+  10:  "App does not have permission for this action.",
+  4:   "Meta API rate limit reached. Please try again later.",
+  17:  "Meta API rate limit reached. Please try again later.",
+  341: "Meta API feed action rate limit reached. Please try again later.",
+};
+
+const classifyMetaError = (json, status) => {
+  const code = json?.error?.code;
+  const subcode = json?.error?.error_subcode;
+  const friendly = META_ERROR_MESSAGES[code] || META_ERROR_MESSAGES[subcode];
+  const isRateLimit = code === 4 || code === 17 || code === 341 || status === 429;
+  const isAuthError = code === 190;
+  return { code, subcode, friendly, isRateLimit, isAuthError };
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Fetch from Meta Graph API with rate-limit retry.
+ * Respects the Retry-After header on 429 responses.
+ * Retries up to 2 times on rate-limit errors, then throws.
+ */
+const graphFetch = async (path, { method = "GET", searchParams, body } = {}, _attempt = 0) => {
   const url = new URL(`https://graph.facebook.com/${env.meta.graphVersion}${path}`);
   if (searchParams) {
     for (const [k, v] of Object.entries(searchParams)) {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
   }
+
   const res = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+
   const text = await res.text();
   let json;
   try {
@@ -86,12 +117,39 @@ const graphFetch = async (path, { method = "GET", searchParams, body } = {}) => 
   } catch {
     json = { raw: text };
   }
+
   if (!res.ok) {
-    const err = new Error(json?.error?.message || `Graph API error (${res.status}).`);
+    const { code, friendly, isRateLimit, isAuthError } = classifyMetaError(json, res.status);
+
+    // Retry rate-limit errors up to 2 times
+    if (isRateLimit && _attempt < 2) {
+      const retryAfterHeader = res.headers.get("retry-after") || res.headers.get("x-app-usage");
+      // Default backoff: 60s for first retry, 120s for second
+      const waitMs = retryAfterHeader
+        ? Math.min(parseInt(retryAfterHeader, 10) * 1000, 5 * 60 * 1000)
+        : ((_attempt + 1) * 60 * 1000);
+
+      logger.warn("[meta] rate limit hit, retrying", {
+        path,
+        attempt: _attempt + 1,
+        waitMs,
+        code,
+      });
+
+      await sleep(waitMs);
+      return graphFetch(path, { method, searchParams, body }, _attempt + 1);
+    }
+
+    const message = friendly || json?.error?.message || `Graph API error (${res.status}).`;
+    const err = new Error(message);
     err.statusCode = res.status;
+    err.metaCode = code;
+    err.isAuthError = isAuthError;
+    err.isRateLimit = isRateLimit;
     err.details = json;
     throw err;
   }
+
   return json;
 };
 
@@ -182,14 +240,34 @@ const publishToInstagram = async ({
   return { externalPostId: published.id };
 };
 
+/**
+ * Decrypt a token if it's in encrypted format (version:iv:authTag:ciphertext),
+ * otherwise return as-is for backward compatibility with plaintext tokens.
+ */
+const decryptToken = (token) => {
+  if (!token) return token;
+  // Encrypted tokens have exactly 3 colons (4 parts): version:iv:authTag:ciphertext
+  if (token.split(":").length === 4) {
+    return decrypt(token);
+  }
+  return token;
+};
+
 const publish = async ({ account, content }) => {
   if (!account.accessToken) {
     throw new Error("Social account has no access token. Reconnect required.");
   }
+
+  if (!account.pageId && !account.accountId) {
+    throw new Error("Publishing requires a Page ID. Personal profiles not supported.");
+  }
+
+  const pageAccessToken = decryptToken(account.accessToken);
+
   if (account.platform === "facebook") {
     return publishToFacebookPage({
       pageId: account.accountId,
-      pageAccessToken: account.accessToken,
+      pageAccessToken,
       imageUrl: content.imageUrl,
       caption: content.caption,
     });
@@ -197,12 +275,39 @@ const publish = async ({ account, content }) => {
   if (account.platform === "instagram") {
     return publishToInstagram({
       instagramAccountId: account.accountId,
-      pageAccessToken: account.accessToken,
+      pageAccessToken,
       imageUrl: content.imageUrl,
       caption: content.caption,
     });
   }
   throw new Error(`Unsupported platform: ${account.platform}`);
+};
+
+/**
+ * Subscribe a Facebook Page to receive webhook events.
+ * Must be called after connecting a Page so Meta will push events to our webhook URL.
+ * See: https://developers.facebook.com/docs/graph-api/webhooks/getting-started/webhooks-for-pages
+ *
+ * @param {string} pageId
+ * @param {string} pageAccessToken  — decrypted page-level token
+ */
+const subscribePageToWebhooks = async (pageId, pageAccessToken) => {
+  try {
+    await graphFetch(`/${pageId}/subscribed_apps`, {
+      method: "POST",
+      searchParams: {
+        subscribed_fields: "feed,name,picture",
+        access_token: pageAccessToken,
+      },
+    });
+    logger.info("[meta.service] page subscribed to webhooks", { pageId });
+  } catch (err) {
+    // Non-fatal — webhooks are a best-effort feature
+    logger.warn("[meta.service] page webhook subscription failed", {
+      pageId,
+      message: err.message,
+    });
+  }
 };
 
 module.exports = {
@@ -213,6 +318,8 @@ module.exports = {
   exchangeForLongLivedToken,
   listManagedPages,
   publish,
+  decryptToken,
+  graphFetch,
+  subscribePageToWebhooks,
   SCOPES,
-  logger,
 };

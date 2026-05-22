@@ -226,9 +226,159 @@ const passwordReset = ({ name, code }) => {
   return { subject, preheader, html: wrap({ preheader, inner }), text };
 };
 
+const publishFailed = ({ name, platform, accountName, error }) => {
+  const accountLabel = accountName || platform || "your account";
+  const subject = "Your scheduled post failed to publish";
+  const preheader = `We couldn't publish to ${accountLabel} after multiple attempts.`;
+
+  const inner = `
+    <h1 style="margin:0 0 10px;font-family:${FONT_SANS};font-size:28px;font-weight:600;color:${C.ink};letter-spacing:-0.01em;line-height:1.1;">
+      Post failed to <span style="font-family:${FONT_SERIF};font-style:italic;font-weight:400;color:#DC2626;">publish.</span>
+    </h1>
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:15px;line-height:1.6;color:${C.ink2};">
+      Hi ${escape(name || "there")}, we tried publishing your scheduled post to <strong>${escape(accountLabel)}</strong> multiple times but couldn't complete it.
+    </p>
+
+    ${error ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:18px;background:#FEF2F2;border-left:3px solid #DC2626;border-radius:0 8px 8px 0;">
+      <tr><td style="padding:12px 16px;font-family:${FONT_SANS};font-size:13px;line-height:1.55;color:#991B1B;">
+        <strong>Error:</strong> ${escape(String(error).slice(0, 200))}
+      </td></tr>
+    </table>
+    ` : ""}
+
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:14px;line-height:1.6;color:${C.ink2};">
+      This can happen when a connected account's access has changed. Open Postly to reconnect the account and reschedule your post.
+    </p>
+
+    ${buttonBlock({ href: "#", label: "Open Postly" })}
+  `;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    `We couldn't publish your scheduled post to ${accountLabel} after multiple attempts.`,
+    error ? `Error: ${String(error).slice(0, 200)}` : "",
+    ``,
+    `Open Postly to reconnect your account and reschedule.`,
+    ``,
+    `Postly · Your social on autopilot.`,
+  ].filter(Boolean).join("\n");
+
+  return { subject, preheader, html: wrap({ preheader, inner }), text };
+};
+
+const accountExpired = ({ name, platform, accountName }) => {
+  const accountLabel = accountName || platform || "your account";
+  const subject = "Action needed: reconnect your social account";
+  const preheader = `Your ${accountLabel} connection expired — reconnect to keep publishing.`;
+
+  const inner = `
+    <h1 style="margin:0 0 10px;font-family:${FONT_SANS};font-size:28px;font-weight:600;color:${C.ink};letter-spacing:-0.01em;line-height:1.1;">
+      Reconnect <span style="font-family:${FONT_SERIF};font-style:italic;font-weight:400;color:${C.accent};">${escape(accountLabel)}.</span>
+    </h1>
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:15px;line-height:1.6;color:${C.ink2};">
+      Hi ${escape(name || "there")}, the connection to your <strong>${escape(accountLabel)}</strong> account has expired. Scheduled posts will be paused until you reconnect.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:20px;background:${C.accentSoft};border-radius:10px;">
+      <tr><td style="padding:16px 20px;">
+        <p style="margin:0 0 6px;font-family:${FONT_SANS};font-size:13.5px;font-weight:600;color:${C.ink};">Why did this happen?</p>
+        <p style="margin:0;font-family:${FONT_SANS};font-size:13px;line-height:1.55;color:${C.ink2};">
+          Social platforms periodically require re-authorization for security. It takes less than a minute to reconnect.
+        </p>
+      </td></tr>
+    </table>
+
+    ${buttonBlock({ href: "#", label: "Reconnect Account" })}
+  `;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    `Your ${accountLabel} connection has expired. Scheduled posts are paused.`,
+    ``,
+    `Open Postly to reconnect your account in less than a minute.`,
+    ``,
+    `Postly · Your social on autopilot.`,
+  ].join("\n");
+
+  return { subject, preheader, html: wrap({ preheader, inner }), text };
+};
+
+const accountDisconnected = ({ name, platform, accountName }) => {
+  const accountLabel = accountName || platform || "your account";
+  const subject = "Your social account was disconnected";
+  const preheader = `${accountLabel} was disconnected — reconnect to resume publishing.`;
+
+  const inner = `
+    <h1 style="margin:0 0 10px;font-family:${FONT_SANS};font-size:28px;font-weight:600;color:${C.ink};letter-spacing:-0.01em;line-height:1.1;">
+      Account <span style="font-family:${FONT_SERIF};font-style:italic;font-weight:400;color:#DC2626;">disconnected.</span>
+    </h1>
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:15px;line-height:1.6;color:${C.ink2};">
+      Hi ${escape(name || "there")}, your <strong>${escape(accountLabel)}</strong> account was disconnected — possibly via the platform's security settings. Any pending scheduled posts for this account are paused.
+    </p>
+
+    ${buttonBlock({ href: "#", label: "Reconnect in Postly" })}
+  `;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    `Your ${accountLabel} account was disconnected.`,
+    `Pending scheduled posts are paused until you reconnect.`,
+    ``,
+    `Open Postly to reconnect your account.`,
+    ``,
+    `Postly · Your social on autopilot.`,
+  ].join("\n");
+
+  return { subject, preheader, html: wrap({ preheader, inner }), text };
+};
+
+const permissionsRevoked = ({ name, platform, accountName }) => {
+  const accountLabel = accountName || platform || "your account";
+  const subject = "Postly permissions revoked — action needed";
+  const preheader = `Postly lost access to ${accountLabel}. Reconnect to continue.`;
+
+  const inner = `
+    <h1 style="margin:0 0 10px;font-family:${FONT_SANS};font-size:28px;font-weight:600;color:${C.ink};letter-spacing:-0.01em;line-height:1.1;">
+      Permissions <span style="font-family:${FONT_SERIF};font-style:italic;font-weight:400;color:#DC2626;">revoked.</span>
+    </h1>
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:15px;line-height:1.6;color:${C.ink2};">
+      Hi ${escape(name || "there")}, access to <strong>${escape(accountLabel)}</strong> was revoked, likely from the platform's app settings. Postly can no longer publish on your behalf until you reconnect.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:20px;background:#FEF2F2;border-radius:10px;">
+      <tr><td style="padding:14px 18px;font-family:${FONT_SANS};font-size:13px;line-height:1.55;color:#991B1B;">
+        <strong>Note:</strong> You may have removed Postly from your connected apps on ${escape(platform || "the platform")}. Reconnecting re-grants the required permissions.
+      </td></tr>
+    </table>
+
+    ${buttonBlock({ href: "#", label: "Reconnect and Grant Access" })}
+  `;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    `Postly's access to ${accountLabel} was revoked.`,
+    `Publishing is paused until you reconnect and re-grant permissions.`,
+    ``,
+    `Open Postly to reconnect.`,
+    ``,
+    `Postly · Your social on autopilot.`,
+  ].join("\n");
+
+  return { subject, preheader, html: wrap({ preheader, inner }), text };
+};
+
 const TEMPLATES = {
-  verify_email:   verifyEmail,
-  password_reset: passwordReset,
+  verify_email:         verifyEmail,
+  password_reset:       passwordReset,
+  publish_failed:       publishFailed,
+  account_expired:      accountExpired,
+  account_disconnected: accountDisconnected,
+  permissions_revoked:  permissionsRevoked,
 };
 
 const render = (templateName, data = {}) => {
