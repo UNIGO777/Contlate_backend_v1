@@ -1,5 +1,6 @@
 const express = require("express");
 const ApiResponse = require("../core/ApiResponse");
+const env = require("../config/env");
 const authMiddleware = require("../middlewares/auth.middleware");
 const authRoutes = require("../modules/auth/auth.routes");
 const userRoutes = require("../modules/user/user.routes");
@@ -46,11 +47,13 @@ router.get("/business/gbp/callback", (req, res, next) => {
   if (req.headers.authorization) return next();
 
   // Direct browser redirect from Google — forward params to the app deep link
+  // Production / dev build: MOBILE_DEEP_LINK_BASE=postengine:/
+  // Expo Go testing:        MOBILE_DEEP_LINK_BASE=exp://192.168.1.4:8081/--
   const params = new URLSearchParams();
   ["code", "state", "error", "error_description"].forEach((key) => {
     if (req.query[key]) params.set(key, String(req.query[key]));
   });
-  res.redirect(`postengine://gbp-callback?${params.toString()}`);
+  res.redirect(`${env.mobileDeepLinkBase}/gbp-callback?${params.toString()}`);
 });
 
 // Public — Meta OAuth redirect: Facebook/Instagram redirects here after approval/denial.
@@ -58,11 +61,13 @@ router.get("/business/gbp/callback", (req, res, next) => {
 router.get("/social/oauth/meta/callback", (req, res, next) => {
   if (req.headers.authorization) return next();
 
+  // Production / dev build: MOBILE_DEEP_LINK_BASE=postengine:/
+  // Expo Go testing:        MOBILE_DEEP_LINK_BASE=exp://192.168.1.4:8081/--
   const params = new URLSearchParams();
   ["code", "state", "error", "error_description"].forEach((key) => {
     if (req.query[key]) params.set(key, String(req.query[key]));
   });
-  res.redirect(`postengine://social-callback?${params.toString()}`);
+  res.redirect(`${env.mobileDeepLinkBase}/social-callback?${params.toString()}`);
 });
 
 // All routes below require a valid, non-suspended, non-deleted account

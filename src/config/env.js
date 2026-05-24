@@ -29,6 +29,11 @@ const env = {
   apiPrefix: process.env.API_PREFIX || "/api/v1",
   corsOrigin: process.env.CORS_ORIGIN || "*",
   appUrl: process.env.APP_URL || "http://localhost:5000",
+  // Deep link scheme used after OAuth callback:
+  // - Expo Go (dev):       exp://192.168.x.x:8081/--
+  // - Dev build (dev):     postengine:/
+  // - Production (app store): postengine:/
+  mobileDeepLinkBase: process.env.MOBILE_DEEP_LINK_BASE || "postengine:/",
 
   mongodbUri: process.env.MONGODB_URI,
 
