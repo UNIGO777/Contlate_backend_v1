@@ -100,9 +100,11 @@ const disconnectSocialAccount = async ({ userId, socialAccountId }) => {
   }
 
   account.status = SOCIAL_ACCOUNT_STATUS.DISCONNECTED;
-  account.accessToken = "";
+  account.accessToken = "revoked";
   account.refreshToken = "";
+  account.userAccessToken = "";
   account.lastSyncedAt = new Date();
+  account.disconnectReason = "user_action";
   await account.save();
 
   return sanitizeSocialAccount(account);
