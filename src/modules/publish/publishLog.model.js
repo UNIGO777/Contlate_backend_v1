@@ -6,7 +6,6 @@ const publishLogSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Schedule",
       default: null,
-      index: true,
     },
     socialAccountId: {
       type: mongoose.Schema.Types.ObjectId,
