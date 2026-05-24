@@ -19,7 +19,7 @@ const SocialAccount = require("./social.model");
 const getConnectionStatus = asyncHandler(async (req, res) => {
   const forceRefresh = req.query.forceRefresh === "true";
 
-  const detection = await metaService.detectConnectionState(req.user._id, {
+  const detection = await metaService.detectConnectionState(req.user.id, {
     forceRefresh,
   });
 
@@ -41,7 +41,7 @@ const getConnectionStatus = asyncHandler(async (req, res) => {
     detection.state === CONNECTION_STATES.NO_FACEBOOK_LOGIN ||
     detection.state === CONNECTION_STATES.TOKEN_EXPIRED
   ) {
-    const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+    const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
       scopeType: "connect",
     });
     response.oauthUrl = url;
@@ -49,7 +49,7 @@ const getConnectionStatus = asyncHandler(async (req, res) => {
 
   if (detection.state === CONNECTION_STATES.PERMISSIONS_MISSING) {
     const missingScopes = detection.details?.missingScopes || [];
-    const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+    const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
       scopeType: "missing",
       missingScopes,
     });
@@ -101,7 +101,7 @@ const getConnectionStatus = asyncHandler(async (req, res) => {
 const listPages = asyncHandler(async (req, res) => {
   // Find any Meta account for this user that has a userAccessToken
   const account = await SocialAccount.findOne({
-    userId: req.user._id,
+    userId: req.user.id,
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
     status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
     userAccessToken: { $ne: "" },
@@ -151,7 +151,7 @@ const selectPages = asyncHandler(async (req, res) => {
 
   // Find the stored user-level token
   const existingAccount = await SocialAccount.findOne({
-    userId: req.user._id,
+    userId: req.user.id,
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
     userAccessToken: { $ne: "" },
   });
@@ -171,7 +171,7 @@ const selectPages = asyncHandler(async (req, res) => {
   }
 
   const Business = require("../business/business.model");
-  const business = await Business.findOne({ userId: req.user._id });
+  const business = await Business.findOne({ userId: req.user.id });
   if (!business) {
     throw new ApiError(400, "Connect a business profile first.");
   }
@@ -187,7 +187,7 @@ const selectPages = asyncHandler(async (req, res) => {
     .map((p) => p.instagramAccountId);
   const conflicting = await SocialAccount.find({
     businessId: business._id,
-    userId: { $ne: req.user._id },
+    userId: { $ne: req.user.id },
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
     accountId: { $in: [...allSelectedAccountIds, ...allSelectedIgIds] },
     status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
@@ -211,10 +211,10 @@ const selectPages = asyncHandler(async (req, res) => {
 
     upserts.push(
       SocialAccount.findOneAndUpdate(
-        { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
+        { userId: req.user.id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
         {
           $set: {
-            userId: req.user._id,
+            userId: req.user.id,
             businessId: business._id,
             platform: SOCIAL_PLATFORMS.FACEBOOK,
             accountName: page.pageName,
@@ -227,6 +227,7 @@ const selectPages = asyncHandler(async (req, res) => {
             status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
             healthStatus: "healthy",
             disconnectReason: null,
+            profilePictureUrl: page.pageProfilePictureUrl || "",
             grantedScopes: existingScopes,
             oauthScopeType: existingScopeType,
             pendingExpiresAt: null,
@@ -241,10 +242,10 @@ const selectPages = asyncHandler(async (req, res) => {
     if (page.instagramAccountId) {
       upserts.push(
         SocialAccount.findOneAndUpdate(
-          { userId: req.user._id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
+          { userId: req.user.id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
           {
             $set: {
-              userId: req.user._id,
+              userId: req.user.id,
               businessId: business._id,
               platform: SOCIAL_PLATFORMS.INSTAGRAM,
               accountName: page.instagramUsername || page.pageName,
@@ -257,6 +258,7 @@ const selectPages = asyncHandler(async (req, res) => {
               status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
               healthStatus: "healthy",
               disconnectReason: null,
+              profilePictureUrl: page.instagramProfilePictureUrl || "",
               grantedScopes: existingScopes,
               oauthScopeType: existingScopeType,
               pendingExpiresAt: null,
@@ -279,7 +281,7 @@ const selectPages = asyncHandler(async (req, res) => {
 
   await SocialAccount.updateMany(
     {
-      userId: req.user._id,
+      userId: req.user.id,
       platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
       accountId: { $nin: allSelectedIds },
       status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
@@ -298,12 +300,12 @@ const selectPages = asyncHandler(async (req, res) => {
 
   // Clean up pending_setup placeholders
   await SocialAccount.deleteMany({
-    userId: req.user._id,
+    userId: req.user.id,
     status: SOCIAL_ACCOUNT_STATUS.PENDING_SETUP,
   });
 
   // Invalidate connection state cache
-  metaService.invalidateStateCache(req.user._id);
+  metaService.invalidateStateCache(req.user.id);
 
   // Subscribe selected pages to webhooks (fire-and-forget)
   for (const page of selectedPages) {
@@ -337,7 +339,7 @@ const getInstagramStatus = asyncHandler(async (req, res) => {
   const { pageId } = req.params;
 
   const account = await SocialAccount.findOne({
-    userId: req.user._id,
+    userId: req.user.id,
     platform: SOCIAL_PLATFORMS.FACEBOOK,
     accountId: pageId,
     status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
@@ -383,7 +385,7 @@ const getInstagramStatus = asyncHandler(async (req, res) => {
  */
 const checkPermissions = asyncHandler(async (req, res) => {
   const account = await SocialAccount.findOne({
-    userId: req.user._id,
+    userId: req.user.id,
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
     status: { $in: [SOCIAL_ACCOUNT_STATUS.CONNECTED, SOCIAL_ACCOUNT_STATUS.PENDING_SETUP] },
     userAccessToken: { $ne: "" },
@@ -399,7 +401,7 @@ const checkPermissions = asyncHandler(async (req, res) => {
   // Update cached grantedScopes in DB
   await SocialAccount.updateMany(
     {
-      userId: req.user._id,
+      userId: req.user.id,
       platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
       status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
     },
@@ -425,7 +427,7 @@ const checkPermissions = asyncHandler(async (req, res) => {
   // Add reauth URL if scopes are missing or declined
   const needsReauth = [...missing, ...declined];
   if (needsReauth.length > 0) {
-    const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+    const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
       scopeType: "missing",
       missingScopes: needsReauth,
     });
@@ -448,7 +450,7 @@ const refreshToken = asyncHandler(async (req, res) => {
 
   const account = await SocialAccount.findOne({
     _id: socialAccountId,
-    userId: req.user._id,
+    userId: req.user.id,
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
   });
 
@@ -541,7 +543,7 @@ const refreshToken = asyncHandler(async (req, res) => {
       {
         pageId: account.pageId,
         platform: SOCIAL_PLATFORMS.INSTAGRAM,
-        userId: req.user._id,
+        userId: req.user.id,
       },
       {
         $set: {
@@ -559,7 +561,7 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 
   // Invalidate connection state cache after refresh
-  metaService.invalidateStateCache(req.user._id);
+  metaService.invalidateStateCache(req.user.id);
 
   // Auto-resume paused schedules for this account (and linked IG)
   const { resumePausedSchedules } = require("../../jobs/postPublisher.job");
@@ -569,7 +571,7 @@ const refreshToken = asyncHandler(async (req, res) => {
     SocialAccount.find({
       pageId: account.pageId,
       platform: SOCIAL_PLATFORMS.INSTAGRAM,
-      userId: req.user._id,
+      userId: req.user.id,
     }).lean().then((igAccounts) => {
       for (const ig of igAccounts) {
         resumePausedSchedules(ig._id).catch(() => {});
@@ -599,7 +601,7 @@ const reconnect = asyncHandler(async (req, res) => {
 
   const account = await SocialAccount.findOne({
     _id: socialAccountId,
-    userId: req.user._id,
+    userId: req.user.id,
     platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
   });
 
@@ -665,7 +667,7 @@ const reconnect = asyncHandler(async (req, res) => {
               {
                 pageId: account.pageId,
                 platform: SOCIAL_PLATFORMS.INSTAGRAM,
-                userId: req.user._id,
+                userId: req.user.id,
               },
               {
                 $set: {
@@ -684,14 +686,14 @@ const reconnect = asyncHandler(async (req, res) => {
           }
 
           // Invalidate cache and resume paused schedules
-          metaService.invalidateStateCache(req.user._id);
+          metaService.invalidateStateCache(req.user.id);
           const { resumePausedSchedules } = require("../../jobs/postPublisher.job");
           resumePausedSchedules(account._id).catch(() => {});
           if (account.platform === SOCIAL_PLATFORMS.FACEBOOK && account.pageId) {
             SocialAccount.find({
               pageId: account.pageId,
               platform: SOCIAL_PLATFORMS.INSTAGRAM,
-              userId: req.user._id,
+              userId: req.user.id,
             }).lean().then((igAccounts) => {
               for (const ig of igAccounts) {
                 resumePausedSchedules(ig._id).catch(() => {});
@@ -708,7 +710,7 @@ const reconnect = asyncHandler(async (req, res) => {
           );
         }
         // If optimistic lock failed, token was refreshed by another process — still success
-        metaService.invalidateStateCache(req.user._id);
+        metaService.invalidateStateCache(req.user.id);
         return res.status(200).json(
           new ApiResponse(200, {
             reconnected: true,
@@ -723,7 +725,7 @@ const reconnect = asyncHandler(async (req, res) => {
   }
 
   // Step 2: Silent refresh failed or no token — generate OAuth URL for re-auth
-  const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+  const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
     scopeType: "publish",
     isReconnect: true,
   });
@@ -744,7 +746,7 @@ const reconnect = asyncHandler(async (req, res) => {
  * Uses the existing stored token — no new OAuth needed.
  */
 const refreshConnection = asyncHandler(async (req, res) => {
-  const detection = await metaService.detectConnectionState(req.user._id, {
+  const detection = await metaService.detectConnectionState(req.user.id, {
     forceRefresh: true,
   });
 
@@ -766,7 +768,7 @@ const refreshConnection = asyncHandler(async (req, res) => {
     detection.state === CONNECTION_STATES.NO_FACEBOOK_LOGIN ||
     detection.state === CONNECTION_STATES.TOKEN_EXPIRED
   ) {
-    const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+    const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
       scopeType: "connect",
     });
     response.oauthUrl = url;
@@ -774,7 +776,7 @@ const refreshConnection = asyncHandler(async (req, res) => {
 
   if (detection.state === CONNECTION_STATES.PERMISSIONS_MISSING) {
     const missingScopes = detection.details?.missingScopes || [];
-    const { url } = metaService.getAuthorizeUrl(req.user._id.toString(), {
+    const { url } = metaService.getAuthorizeUrl(req.user.id.toString(), {
       scopeType: "missing",
       missingScopes,
     });

@@ -275,7 +275,7 @@ const listManagedPages = async (userAccessToken) => {
   const data = await graphFetch("/me/accounts", {
     searchParams: {
       access_token: userAccessToken,
-      fields: "id,name,access_token,instagram_business_account{id,username},tasks",
+      fields: "id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url},tasks",
       limit: 100,
     },
   });
@@ -286,8 +286,10 @@ const listManagedPages = async (userAccessToken) => {
       pageId: p.id,
       pageName: p.name,
       pageAccessToken: p.access_token,
+      pageProfilePictureUrl: p.picture?.data?.url || "",
       instagramAccountId: p.instagram_business_account?.id || null,
       instagramUsername: p.instagram_business_account?.username || null,
+      instagramProfilePictureUrl: p.instagram_business_account?.profile_picture_url || "",
       tasks,
       canPublish,
     };
