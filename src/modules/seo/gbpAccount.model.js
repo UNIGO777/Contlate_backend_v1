@@ -48,6 +48,20 @@ const gbpAccountSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    // Temporarily stores fetched locations when multiple exist (for the picker UI).
+    // Cleared after user selects a location.
+    pendingLocations: {
+      type: [
+        {
+          locationId: String,
+          locationName: String,
+          address: String,
+          accountId: String,
+          accountName: String,
+        },
+      ],
+      default: [],
+    },
     connectedAt: {
       type: Date,
       default: Date.now,
@@ -58,7 +72,7 @@ const gbpAccountSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["connected", "expired", "revoked", "pending_locations"],
+      enum: ["connected", "expired", "revoked", "pending_locations", "syncing"],
       default: "connected",
     },
     encryptionVersion: {

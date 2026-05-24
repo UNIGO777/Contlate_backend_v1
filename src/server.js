@@ -61,6 +61,7 @@ const startServer = async () => {
         const posterImageWorker = require("./queues/workers/posterImage.worker");
         const welcomePosterWorker = require("./queues/workers/welcomePoster.worker");
         const posterCleanupWorker = require("./queues/workers/posterCleanup.worker");
+        const gbpSyncWorker = require("./queues/workers/gbpSync.worker");
         const posterScheduler = require("./queues/scheduler");
 
         contentPlanWorker.start();
@@ -68,8 +69,9 @@ const startServer = async () => {
         posterImageWorker.start();
         welcomePosterWorker.start();
         posterCleanupWorker.start();
+        gbpSyncWorker.start();
         posterScheduler.start();
-        logger.info("Poster queue workers + scheduler started (Redis connected)");
+        logger.info("Queue workers + scheduler started (Redis connected)");
       } catch (queueErr) {
         logger.warn("Poster queue workers failed to start", { message: queueErr.message });
       }

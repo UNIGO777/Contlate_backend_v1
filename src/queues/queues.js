@@ -7,6 +7,7 @@ const QUEUE_NAMES = Object.freeze({
   POSTER_IMAGE: "poster-image",
   WELCOME_POSTER: "welcome-poster",
   POSTER_CLEANUP: "poster-cleanup",
+  GBP_SYNC: "gbp-sync",
 });
 
 let queues = null;
@@ -63,6 +64,16 @@ const getQueues = () => {
         attempts: 5,
         backoff: { type: "exponential", delay: 10_000 },
         removeOnComplete: { count: 2000 },
+        removeOnFail: { count: 1000 },
+      },
+    }),
+
+    gbpSync: new Queue(QUEUE_NAMES.GBP_SYNC, {
+      connection,
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: { type: "exponential", delay: 60_000 }, // 1m, 2m, 4m, 8m, 16m
+        removeOnComplete: { count: 500 },
         removeOnFail: { count: 1000 },
       },
     }),

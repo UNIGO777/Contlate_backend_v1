@@ -21,7 +21,8 @@ const getConnectUrl = asyncHandler(async (req, res) => {
 /**
  * GET /business/gbp/callback
  * Google redirects here after the user approves or denies.
- * Exchanges code for tokens, fetches accounts/locations, stores encrypted tokens.
+ * Exchanges code for tokens, saves them, and queues a background sync job.
+ * Returns immediately — does NOT call Google Business APIs in-request.
  */
 const handleCallback = asyncHandler(async (req, res) => {
   const { code, state, error: oauthError, error_description } = req.query;
@@ -60,21 +61,59 @@ const handleCallback = asyncHandler(async (req, res) => {
   // Exchange code for tokens
   const tokenData = await gbpOAuthService.exchangeCode(code);
 
-  // Fetch accounts + locations, save encrypted tokens
-  const result = await gbpOAuthService.connectAndFetchLocations(
+  // Save tokens and queue background sync (returns immediately)
+  await gbpOAuthService.connectAndSaveTokens(
     req.user.id,
     req.business._id,
     tokenData
   );
 
-  logger.info("[gbp] OAuth connected", {
+  logger.info("[gbp] OAuth tokens saved, sync queued", {
     businessId: req.business._id,
-    accountCount: result.accounts.length,
-    locationCount: result.locations.length,
-    autoConnected: result.autoConnected,
   });
 
-  return _respondWithLocations(res, req.user.id, req.business._id, result);
+  return res.status(200).json(
+    new ApiResponse(200, {
+      connected: true,
+      syncing: true,
+    }, "Google account connected. Fetching your business locations in the background...")
+  );
+});
+
+/**
+ * POST /business/gbp/retry-fetch
+ * Re-queue a GBP sync job for a business whose initial sync failed.
+ */
+const retryFetchLocations = asyncHandler(async (req, res) => {
+  const result = await gbpOAuthService.retrySync(req.business._id);
+
+  if (result.alreadyComplete) {
+    return res.status(200).json(
+      new ApiResponse(200, {
+        connected: true,
+        syncing: false,
+        locationName: result.gbpAccount.gbpLocationName,
+      }, "Google Business Profile is already connected.")
+    );
+  }
+
+  if (result.alreadySyncing) {
+    return res.status(200).json(
+      new ApiResponse(200, {
+        connected: true,
+        syncing: true,
+      }, "Sync is already in progress. Please wait...")
+    );
+  }
+
+  logger.info("[gbp] retry sync queued", { businessId: req.business._id });
+
+  return res.status(200).json(
+    new ApiResponse(200, {
+      connected: true,
+      syncing: true,
+    }, "Retrying location fetch in the background...")
+  );
 });
 
 /**
@@ -128,33 +167,6 @@ const getStatus = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /business/gbp/retry-fetch
- * Retry fetching GBP accounts/locations using already-saved tokens.
- * Used when the initial fetch after OAuth failed due to rate limiting.
- */
-const retryFetchLocations = asyncHandler(async (req, res) => {
-  const result = await gbpOAuthService.fetchLocationsForBusiness(req.business._id);
-
-  if (result.alreadyComplete) {
-    return res.status(200).json(
-      new ApiResponse(200, {
-        connected: true,
-        locationName: result.gbpAccount.gbpLocationName,
-        needsLocationPicker: false,
-      }, "Google Business Profile is already connected.")
-    );
-  }
-
-  logger.info("[gbp] retry fetch succeeded", {
-    businessId: req.business._id,
-    locationCount: result.locations.length,
-    autoConnected: result.autoConnected,
-  });
-
-  return _respondWithLocations(res, req.user.id, req.business._id, result);
-});
-
-/**
  * DELETE /business/gbp/disconnect
  * Removes GBP tokens — user can reconnect anytime.
  */
@@ -170,39 +182,6 @@ const disconnect = asyncHandler(async (req, res) => {
     new ApiResponse(200, { disconnected: true }, "Google Business Profile disconnected.")
   );
 });
-
-/**
- * Shared helper — format the response after fetching locations.
- */
-function _respondWithLocations(res, userId, businessId, result) {
-  if (result.autoConnected) {
-    // Auto-trigger AI keyword generation in background
-    aiSeoService.generateKeywords(userId, businessId).catch((err) => {
-      logger.warn("[gbp] auto AI SEO generation failed", { error: err.message });
-    });
-
-    return res.status(200).json(
-      new ApiResponse(200, {
-        connected: true,
-        locationName: result.locations[0].locationName,
-        needsLocationPicker: false,
-      }, "Google Business Profile connected successfully.")
-    );
-  }
-
-  return res.status(200).json(
-    new ApiResponse(200, {
-      connected: true,
-      needsLocationPicker: true,
-      locations: result.locations.map((loc) => ({
-        locationId: loc.locationId,
-        locationName: loc.locationName,
-        address: loc.address,
-        accountName: loc.accountName,
-      })),
-    }, "Google connected. Please select your business location.")
-  );
-}
 
 module.exports = {
   getConnectUrl,

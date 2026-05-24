@@ -255,29 +255,18 @@ async function listLocations(accessToken, accountId) {
 // ─── Connect / Save / Disconnect ────────────────────────────────────────────
 
 /**
- * Helper: check if an error is a Google API rate limit (429 / quota exceeded).
+ * After OAuth callback: save tokens to DB and queue a background job
+ * to fetch accounts/locations. Returns immediately — no Google API calls here.
+ * The GBP sync worker handles all Google API communication with proper
+ * rate limiting, delays, and exponential backoff retries.
  */
-function isRateLimitError(err) {
-  return (
-    err.code === 429 ||
-    err.status === 429 ||
-    (err.message && err.message.includes("Quota exceeded"))
-  );
-}
-
-/**
- * After OAuth callback: save tokens FIRST, then try to fetch accounts + locations.
- * If Google API calls fail with rate limits, tokens are already persisted so the
- * user can retry via fetchLocationsForBusiness without re-doing OAuth.
- */
-async function connectAndFetchLocations(userId, businessId, tokenData) {
+async function connectAndSaveTokens(userId, businessId, tokenData) {
   const { accessToken, refreshToken, tokenExpiry, scopes } = tokenData;
 
-  // ── Step 1: Save tokens to DB immediately (before any Google API calls) ──
   const encAccessToken = encrypt(accessToken);
   const encRefreshToken = encrypt(refreshToken);
 
-  await GbpAccount.findOneAndUpdate(
+  const gbpAccountDoc = await GbpAccount.findOneAndUpdate(
     { businessId },
     {
       $set: {
@@ -289,7 +278,7 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
         scopes,
         encryptionVersion: env.encryption.currentVersion,
         connectedAt: new Date(),
-        status: "pending_locations",
+        status: "syncing",
         gbpAccountId: "",
         gbpAccountName: "",
         gbpLocationId: "",
@@ -299,17 +288,38 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
   );
 
-  logger.info("[gbp] tokens saved, fetching accounts/locations", { businessId });
+  logger.info("[gbp] tokens saved, queuing background sync", { businessId });
 
-  // ── Step 2: Fetch accounts + locations using the plain access token ──
-  return _fetchAndFinalise(businessId, accessToken);
+  // Queue background job (deduplication: one job per business)
+  try {
+    const { getQueues } = require("../queues/queues");
+    const queues = getQueues();
+    await queues.gbpSync.add(
+      "sync-locations",
+      { businessId: businessId.toString(), userId: userId.toString() },
+      {
+        jobId: `gbp-sync-${businessId}`, // deduplicate: only one sync per business
+        delay: 2000, // 2-second delay before starting (avoid immediate rate limits)
+      }
+    );
+  } catch (queueErr) {
+    // If Redis/BullMQ is down, fall back to pending_locations so user can retry manually
+    logger.warn("[gbp] failed to queue sync job, falling back to pending_locations", {
+      businessId,
+      error: queueErr.message,
+    });
+    gbpAccountDoc.status = "pending_locations";
+    await gbpAccountDoc.save();
+  }
+
+  return gbpAccountDoc;
 }
 
 /**
- * Retry fetching GBP accounts/locations for a business that already has saved tokens.
- * Used when the initial fetch failed (e.g. rate limit) but tokens are persisted.
+ * Retry: re-queue a GBP sync job for a business that already has saved tokens.
+ * Used when the background sync failed or Redis was down during initial connect.
  */
-async function fetchLocationsForBusiness(businessId) {
+async function retrySync(businessId) {
   const gbpAccount = await GbpAccount.findOne({ businessId });
   if (!gbpAccount) {
     throw new ApiError(404, "No Google connection found. Please connect first.", {
@@ -317,106 +327,50 @@ async function fetchLocationsForBusiness(businessId) {
     });
   }
 
-  // If locations are already fetched and a location is selected, return status
+  // Already fully connected
   if (gbpAccount.status === "connected" && gbpAccount.gbpLocationId) {
-    return {
-      accounts: [],
-      locations: [],
-      gbpAccount: gbpAccount,
-      autoConnected: true,
-      alreadyComplete: true,
-    };
+    return { alreadyComplete: true, gbpAccount };
   }
 
-  // Decrypt the saved access token
-  let accessToken;
+  // Already syncing
+  if (gbpAccount.status === "syncing") {
+    return { alreadySyncing: true, gbpAccount };
+  }
+
+  // Queue the sync job
+  gbpAccount.status = "syncing";
+  await gbpAccount.save();
+
   try {
-    accessToken = decrypt(gbpAccount.accessToken);
-  } catch {
-    throw new ApiError(401, "Stored token is invalid. Please reconnect Google Business Profile.", {
-      code: ERROR_CODES.GBP_OAUTH_FAILED,
+    const { getQueues } = require("../queues/queues");
+    const queues = getQueues();
+
+    // Remove any stale job with the same ID before adding
+    const existingJob = await queues.gbpSync.getJob(`gbp-sync-${businessId}`);
+    if (existingJob) {
+      const state = await existingJob.getState();
+      if (state === "completed" || state === "failed") {
+        await existingJob.remove();
+      }
+    }
+
+    await queues.gbpSync.add(
+      "sync-locations",
+      { businessId: businessId.toString(), userId: gbpAccount.userId.toString() },
+      {
+        jobId: `gbp-sync-${businessId}`,
+        delay: 2000,
+      }
+    );
+  } catch (queueErr) {
+    gbpAccount.status = "pending_locations";
+    await gbpAccount.save();
+    throw new ApiError(503, "Background sync service is temporarily unavailable. Please try again.", {
+      code: ERROR_CODES.GBP_RATE_LIMITED,
     });
   }
 
-  // If token is expired, try refreshing first
-  if (gbpAccount.tokenExpiry && gbpAccount.tokenExpiry.getTime() < Date.now() + 60 * 1000) {
-    accessToken = await refreshAccessToken(gbpAccount);
-  }
-
-  return _fetchAndFinalise(gbpAccount.businessId, accessToken);
-}
-
-/**
- * Internal: fetch Google accounts + locations and update the GbpAccount doc.
- * Throws GBP_RATE_LIMITED (429) if Google API quota is hit — tokens stay saved.
- */
-async function _fetchAndFinalise(businessId, accessToken) {
-  let accounts;
-  try {
-    accounts = await listAccounts(accessToken);
-  } catch (err) {
-    if (isRateLimitError(err)) {
-      throw new ApiError(429, "Google API rate limit reached. Your connection is saved — please tap 'Retry' in a minute.", {
-        code: ERROR_CODES.GBP_RATE_LIMITED,
-      });
-    }
-    throw err;
-  }
-
-  if (accounts.length === 0) {
-    throw new ApiError(400, "No Google Business Profile found for this Google account. Please create one on Google first.", {
-      code: ERROR_CODES.GBP_ACCOUNT_NOT_FOUND,
-    });
-  }
-
-  let allLocations = [];
-  try {
-    for (const account of accounts) {
-      const locations = await listLocations(accessToken, account.accountId);
-      allLocations.push(
-        ...locations.map((loc) => ({
-          ...loc,
-          accountId: account.accountId,
-          accountName: account.accountName,
-        }))
-      );
-    }
-  } catch (err) {
-    if (isRateLimitError(err)) {
-      throw new ApiError(429, "Google API rate limit reached. Your connection is saved — please tap 'Retry' in a minute.", {
-        code: ERROR_CODES.GBP_RATE_LIMITED,
-      });
-    }
-    throw err;
-  }
-
-  if (allLocations.length === 0) {
-    throw new ApiError(400, "No business locations found in your Google Business Profile. Please add a location on Google first.", {
-      code: ERROR_CODES.GBP_ACCOUNT_NOT_FOUND,
-    });
-  }
-
-  // Update status and auto-select if single location
-  const gbpAccountDoc = await GbpAccount.findOneAndUpdate(
-    { businessId },
-    {
-      $set: {
-        status: "connected",
-        gbpAccountId: allLocations.length === 1 ? allLocations[0].accountId : "",
-        gbpAccountName: allLocations.length === 1 ? allLocations[0].accountName : "",
-        gbpLocationId: allLocations.length === 1 ? allLocations[0].locationId : "",
-        gbpLocationName: allLocations.length === 1 ? allLocations[0].locationName : "",
-      },
-    },
-    { returnDocument: "after" }
-  );
-
-  return {
-    accounts,
-    locations: allLocations,
-    gbpAccount: gbpAccountDoc,
-    autoConnected: allLocations.length === 1,
-  };
+  return { queued: true, gbpAccount };
 }
 
 /**
@@ -444,6 +398,7 @@ async function selectLocation(businessId, locationId, locationMeta) {
   gbpAccount.gbpLocationName = locationMeta?.locationName || locationId;
   gbpAccount.gbpAccountId = locationMeta?.accountId || gbpAccount.gbpAccountId || "";
   gbpAccount.gbpAccountName = locationMeta?.accountName || gbpAccount.gbpAccountName || "";
+  gbpAccount.pendingLocations = []; // clear after selection
   await gbpAccount.save();
 
   return gbpAccount;
@@ -465,21 +420,34 @@ async function disconnect(businessId) {
  */
 async function getStatus(businessId) {
   const gbpAccount = await GbpAccount.findOne({ businessId }).select(
-    "status gbpLocationName gbpAccountName connectedAt gbpLocationId"
+    "status gbpLocationName gbpAccountName connectedAt gbpLocationId pendingLocations"
   );
 
   if (!gbpAccount) {
     return { connected: false };
   }
 
-  return {
+  const result = {
     connected: gbpAccount.status === "connected",
+    syncing: gbpAccount.status === "syncing",
     status: gbpAccount.status,
     locationName: gbpAccount.gbpLocationName || "",
     accountName: gbpAccount.gbpAccountName || "",
     locationSelected: !!gbpAccount.gbpLocationId,
     connectedAt: gbpAccount.connectedAt,
   };
+
+  // Include pending locations if user needs to pick one
+  if (
+    gbpAccount.status === "connected" &&
+    !gbpAccount.gbpLocationId &&
+    gbpAccount.pendingLocations?.length > 0
+  ) {
+    result.needsLocationPicker = true;
+    result.locations = gbpAccount.pendingLocations;
+  }
+
+  return result;
 }
 
 module.exports = {
@@ -491,8 +459,8 @@ module.exports = {
   getValidAccessToken,
   listAccounts,
   listLocations,
-  connectAndFetchLocations,
-  fetchLocationsForBusiness,
+  connectAndSaveTokens,
+  retrySync,
   selectLocation,
   disconnect,
   getStatus,
