@@ -255,19 +255,109 @@ async function listLocations(accessToken, accountId) {
 // ─── Connect / Save / Disconnect ────────────────────────────────────────────
 
 /**
- * After OAuth callback: fetch accounts + locations, save encrypted tokens.
- * Returns { accounts, locations, gbpAccountDoc } for the controller to use.
+ * Helper: check if an error is a Google API rate limit (429 / quota exceeded).
+ */
+function isRateLimitError(err) {
+  return (
+    err.code === 429 ||
+    err.status === 429 ||
+    (err.message && err.message.includes("Quota exceeded"))
+  );
+}
+
+/**
+ * After OAuth callback: save tokens FIRST, then try to fetch accounts + locations.
+ * If Google API calls fail with rate limits, tokens are already persisted so the
+ * user can retry via fetchLocationsForBusiness without re-doing OAuth.
  */
 async function connectAndFetchLocations(userId, businessId, tokenData) {
   const { accessToken, refreshToken, tokenExpiry, scopes } = tokenData;
 
+  // ── Step 1: Save tokens to DB immediately (before any Google API calls) ──
+  const encAccessToken = encrypt(accessToken);
+  const encRefreshToken = encrypt(refreshToken);
+
+  await GbpAccount.findOneAndUpdate(
+    { businessId },
+    {
+      $set: {
+        userId,
+        businessId,
+        accessToken: encAccessToken,
+        refreshToken: encRefreshToken,
+        tokenExpiry,
+        scopes,
+        encryptionVersion: env.encryption.currentVersion,
+        connectedAt: new Date(),
+        status: "pending_locations",
+        gbpAccountId: "",
+        gbpAccountName: "",
+        gbpLocationId: "",
+        gbpLocationName: "",
+      },
+    },
+    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
+  );
+
+  logger.info("[gbp] tokens saved, fetching accounts/locations", { businessId });
+
+  // ── Step 2: Fetch accounts + locations using the plain access token ──
+  return _fetchAndFinalise(businessId, accessToken);
+}
+
+/**
+ * Retry fetching GBP accounts/locations for a business that already has saved tokens.
+ * Used when the initial fetch failed (e.g. rate limit) but tokens are persisted.
+ */
+async function fetchLocationsForBusiness(businessId) {
+  const gbpAccount = await GbpAccount.findOne({ businessId });
+  if (!gbpAccount) {
+    throw new ApiError(404, "No Google connection found. Please connect first.", {
+      code: ERROR_CODES.GBP_NOT_CONNECTED,
+    });
+  }
+
+  // If locations are already fetched and a location is selected, return status
+  if (gbpAccount.status === "connected" && gbpAccount.gbpLocationId) {
+    return {
+      accounts: [],
+      locations: [],
+      gbpAccount: gbpAccount,
+      autoConnected: true,
+      alreadyComplete: true,
+    };
+  }
+
+  // Decrypt the saved access token
+  let accessToken;
+  try {
+    accessToken = decrypt(gbpAccount.accessToken);
+  } catch {
+    throw new ApiError(401, "Stored token is invalid. Please reconnect Google Business Profile.", {
+      code: ERROR_CODES.GBP_OAUTH_FAILED,
+    });
+  }
+
+  // If token is expired, try refreshing first
+  if (gbpAccount.tokenExpiry && gbpAccount.tokenExpiry.getTime() < Date.now() + 60 * 1000) {
+    accessToken = await refreshAccessToken(gbpAccount);
+  }
+
+  return _fetchAndFinalise(gbpAccount.businessId, accessToken);
+}
+
+/**
+ * Internal: fetch Google accounts + locations and update the GbpAccount doc.
+ * Throws GBP_RATE_LIMITED (429) if Google API quota is hit — tokens stay saved.
+ */
+async function _fetchAndFinalise(businessId, accessToken) {
   let accounts;
   try {
     accounts = await listAccounts(accessToken);
   } catch (err) {
-    if (err.code === 429 || err.status === 429 || (err.message && err.message.includes("Quota exceeded"))) {
-      throw new ApiError(429, "Google API rate limit reached. Please wait a minute and try again.", {
-        code: ERROR_CODES.GBP_OAUTH_FAILED,
+    if (isRateLimitError(err)) {
+      throw new ApiError(429, "Google API rate limit reached. Your connection is saved — please tap 'Retry' in a minute.", {
+        code: ERROR_CODES.GBP_RATE_LIMITED,
       });
     }
     throw err;
@@ -279,7 +369,6 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
     });
   }
 
-  // Fetch locations for each account
   let allLocations = [];
   try {
     for (const account of accounts) {
@@ -293,9 +382,9 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
       );
     }
   } catch (err) {
-    if (err.code === 429 || err.status === 429 || (err.message && err.message.includes("Quota exceeded"))) {
-      throw new ApiError(429, "Google API rate limit reached. Please wait a minute and try again.", {
-        code: ERROR_CODES.GBP_OAUTH_FAILED,
+    if (isRateLimitError(err)) {
+      throw new ApiError(429, "Google API rate limit reached. Your connection is saved — please tap 'Retry' in a minute.", {
+        code: ERROR_CODES.GBP_RATE_LIMITED,
       });
     }
     throw err;
@@ -307,31 +396,19 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
     });
   }
 
-  // Save tokens encrypted — don't finalize location yet if multiple
-  const encAccessToken = encrypt(accessToken);
-  const encRefreshToken = encrypt(refreshToken);
-
+  // Update status and auto-select if single location
   const gbpAccountDoc = await GbpAccount.findOneAndUpdate(
     { businessId },
     {
       $set: {
-        userId,
-        businessId,
-        accessToken: encAccessToken,
-        refreshToken: encRefreshToken,
-        tokenExpiry,
-        scopes,
-        encryptionVersion: env.encryption.currentVersion,
-        connectedAt: new Date(),
         status: "connected",
-        // If single location, auto-connect; otherwise leave empty for picker
         gbpAccountId: allLocations.length === 1 ? allLocations[0].accountId : "",
         gbpAccountName: allLocations.length === 1 ? allLocations[0].accountName : "",
         gbpLocationId: allLocations.length === 1 ? allLocations[0].locationId : "",
         gbpLocationName: allLocations.length === 1 ? allLocations[0].locationName : "",
       },
     },
-    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
+    { returnDocument: "after" }
   );
 
   return {
@@ -415,6 +492,7 @@ module.exports = {
   listAccounts,
   listLocations,
   connectAndFetchLocations,
+  fetchLocationsForBusiness,
   selectLocation,
   disconnect,
   getStatus,

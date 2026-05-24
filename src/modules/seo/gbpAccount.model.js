@@ -58,7 +58,7 @@ const gbpAccountSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["connected", "expired", "revoked"],
+      enum: ["connected", "expired", "revoked", "pending_locations"],
       default: "connected",
     },
     encryptionVersion: {

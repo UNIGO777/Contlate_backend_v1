@@ -74,34 +74,7 @@ const handleCallback = asyncHandler(async (req, res) => {
     autoConnected: result.autoConnected,
   });
 
-  // If single location: fully connected. If multiple: need picker.
-  if (result.autoConnected) {
-    // Auto-trigger AI keyword generation in background
-    aiSeoService.generateKeywords(req.user.id, req.business._id).catch((err) => {
-      logger.warn("[gbp] auto AI SEO generation failed", { error: err.message });
-    });
-
-    return res.status(200).json(
-      new ApiResponse(200, {
-        connected: true,
-        locationName: result.locations[0].locationName,
-        needsLocationPicker: false,
-      }, "Google Business Profile connected successfully.")
-    );
-  }
-
-  return res.status(200).json(
-    new ApiResponse(200, {
-      connected: true,
-      needsLocationPicker: true,
-      locations: result.locations.map((loc) => ({
-        locationId: loc.locationId,
-        locationName: loc.locationName,
-        address: loc.address,
-        accountName: loc.accountName,
-      })),
-    }, "Google connected. Please select your business location.")
-  );
+  return _respondWithLocations(res, req.user.id, req.business._id, result);
 });
 
 /**
@@ -155,6 +128,33 @@ const getStatus = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /business/gbp/retry-fetch
+ * Retry fetching GBP accounts/locations using already-saved tokens.
+ * Used when the initial fetch after OAuth failed due to rate limiting.
+ */
+const retryFetchLocations = asyncHandler(async (req, res) => {
+  const result = await gbpOAuthService.fetchLocationsForBusiness(req.business._id);
+
+  if (result.alreadyComplete) {
+    return res.status(200).json(
+      new ApiResponse(200, {
+        connected: true,
+        locationName: result.gbpAccount.gbpLocationName,
+        needsLocationPicker: false,
+      }, "Google Business Profile is already connected.")
+    );
+  }
+
+  logger.info("[gbp] retry fetch succeeded", {
+    businessId: req.business._id,
+    locationCount: result.locations.length,
+    autoConnected: result.autoConnected,
+  });
+
+  return _respondWithLocations(res, req.user.id, req.business._id, result);
+});
+
+/**
  * DELETE /business/gbp/disconnect
  * Removes GBP tokens — user can reconnect anytime.
  */
@@ -171,10 +171,44 @@ const disconnect = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * Shared helper — format the response after fetching locations.
+ */
+function _respondWithLocations(res, userId, businessId, result) {
+  if (result.autoConnected) {
+    // Auto-trigger AI keyword generation in background
+    aiSeoService.generateKeywords(userId, businessId).catch((err) => {
+      logger.warn("[gbp] auto AI SEO generation failed", { error: err.message });
+    });
+
+    return res.status(200).json(
+      new ApiResponse(200, {
+        connected: true,
+        locationName: result.locations[0].locationName,
+        needsLocationPicker: false,
+      }, "Google Business Profile connected successfully.")
+    );
+  }
+
+  return res.status(200).json(
+    new ApiResponse(200, {
+      connected: true,
+      needsLocationPicker: true,
+      locations: result.locations.map((loc) => ({
+        locationId: loc.locationId,
+        locationName: loc.locationName,
+        address: loc.address,
+        accountName: loc.accountName,
+      })),
+    }, "Google connected. Please select your business location.")
+  );
+}
+
 module.exports = {
   getConnectUrl,
   handleCallback,
   selectLocation,
+  retryFetchLocations,
   getStatus,
   disconnect,
 };

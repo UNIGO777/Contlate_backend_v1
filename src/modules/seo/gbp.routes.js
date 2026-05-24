@@ -13,6 +13,9 @@ router.get("/connect-url", gbpController.getConnectUrl);
 // GET /business/gbp/callback — Google redirects here after approval/denial
 router.get("/callback", gbpController.handleCallback);
 
+// POST /business/gbp/retry-fetch — retry fetching locations (after rate limit)
+router.post("/retry-fetch", gbpController.retryFetchLocations);
+
 // POST /business/gbp/select-location — user picks which GBP location
 router.post("/select-location", gbpController.selectLocation);
 
