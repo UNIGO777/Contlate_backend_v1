@@ -420,17 +420,33 @@ async function disconnect(businessId) {
  */
 async function getStatus(businessId) {
   const gbpAccount = await GbpAccount.findOne({ businessId }).select(
-    "status gbpLocationName gbpAccountName connectedAt gbpLocationId pendingLocations"
+    "_id status gbpLocationName gbpAccountName connectedAt gbpLocationId pendingLocations"
   );
 
   if (!gbpAccount) {
     return { connected: false };
   }
 
+  // Safety net: if syncing for more than 10 minutes, treat as pending_locations
+  // (in case the worker failed to update status after all retries)
+  let effectiveStatus = gbpAccount.status;
+  if (
+    effectiveStatus === "syncing" &&
+    gbpAccount.connectedAt &&
+    Date.now() - gbpAccount.connectedAt.getTime() > 10 * 60 * 1000
+  ) {
+    effectiveStatus = "pending_locations";
+    // Also update the DB so it doesn't keep returning syncing
+    GbpAccount.updateOne(
+      { _id: gbpAccount._id, status: "syncing" },
+      { $set: { status: "pending_locations" } }
+    ).catch(() => {});
+  }
+
   const result = {
-    connected: gbpAccount.status === "connected",
-    syncing: gbpAccount.status === "syncing",
-    status: gbpAccount.status,
+    connected: effectiveStatus === "connected",
+    syncing: effectiveStatus === "syncing",
+    status: effectiveStatus,
     locationName: gbpAccount.gbpLocationName || "",
     accountName: gbpAccount.gbpAccountName || "",
     locationSelected: !!gbpAccount.gbpLocationId,
@@ -439,7 +455,7 @@ async function getStatus(businessId) {
 
   // Include pending locations if user needs to pick one
   if (
-    gbpAccount.status === "connected" &&
+    effectiveStatus === "connected" &&
     !gbpAccount.gbpLocationId &&
     gbpAccount.pendingLocations?.length > 0
   ) {

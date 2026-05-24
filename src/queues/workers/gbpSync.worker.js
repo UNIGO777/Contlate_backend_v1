@@ -323,11 +323,16 @@ const start = () => {
   );
 
   worker.on("failed", (job, err) => {
-    const isLastAttempt = job && job.attemptsMade >= (job.opts?.attempts || 5);
+    // BullMQ sets attemptsMade AFTER the attempt, and the job has no more retries
+    // when the "failed" event fires for the final time. We can check if the job
+    // will NOT be retried by checking if attemptsMade >= attempts from queue config.
+    const maxAttempts = 4; // matches defaultJobOptions.attempts in queues.js
+    const isLastAttempt = job && job.attemptsMade >= maxAttempts;
     logger.error("[gbpSync.worker] failed", {
       jobId: job?.id,
       businessId: job?.data?.businessId,
       attempt: job?.attemptsMade,
+      maxAttempts,
       error: err.message,
       final: isLastAttempt,
     });

@@ -71,8 +71,8 @@ const getQueues = () => {
     gbpSync: new Queue(QUEUE_NAMES.GBP_SYNC, {
       connection,
       defaultJobOptions: {
-        attempts: 5,
-        backoff: { type: "exponential", delay: 60_000 }, // 1m, 2m, 4m, 8m, 16m
+        attempts: 4,
+        backoff: { type: "exponential", delay: 30_000 }, // 30s, 60s, 120s, 240s (~7.5 min total)
         removeOnComplete: { count: 500 },
         removeOnFail: { count: 1000 },
       },
