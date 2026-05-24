@@ -261,8 +261,18 @@ async function listLocations(accessToken, accountId) {
 async function connectAndFetchLocations(userId, businessId, tokenData) {
   const { accessToken, refreshToken, tokenExpiry, scopes } = tokenData;
 
-  // Fetch accounts
-  const accounts = await listAccounts(accessToken);
+  let accounts;
+  try {
+    accounts = await listAccounts(accessToken);
+  } catch (err) {
+    if (err.code === 429 || err.status === 429 || (err.message && err.message.includes("Quota exceeded"))) {
+      throw new ApiError(429, "Google API rate limit reached. Please wait a minute and try again.", {
+        code: ERROR_CODES.GBP_OAUTH_FAILED,
+      });
+    }
+    throw err;
+  }
+
   if (accounts.length === 0) {
     throw new ApiError(400, "No Google Business Profile found for this Google account. Please create one on Google first.", {
       code: ERROR_CODES.GBP_ACCOUNT_NOT_FOUND,
@@ -271,15 +281,24 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
 
   // Fetch locations for each account
   let allLocations = [];
-  for (const account of accounts) {
-    const locations = await listLocations(accessToken, account.accountId);
-    allLocations.push(
-      ...locations.map((loc) => ({
-        ...loc,
-        accountId: account.accountId,
-        accountName: account.accountName,
-      }))
-    );
+  try {
+    for (const account of accounts) {
+      const locations = await listLocations(accessToken, account.accountId);
+      allLocations.push(
+        ...locations.map((loc) => ({
+          ...loc,
+          accountId: account.accountId,
+          accountName: account.accountName,
+        }))
+      );
+    }
+  } catch (err) {
+    if (err.code === 429 || err.status === 429 || (err.message && err.message.includes("Quota exceeded"))) {
+      throw new ApiError(429, "Google API rate limit reached. Please wait a minute and try again.", {
+        code: ERROR_CODES.GBP_OAUTH_FAILED,
+      });
+    }
+    throw err;
   }
 
   if (allLocations.length === 0) {
@@ -325,8 +344,10 @@ async function connectAndFetchLocations(userId, businessId, tokenData) {
 
 /**
  * User picks a location from the picker (when multiple locations exist).
+ * Accepts the location metadata directly from the controller to avoid
+ * redundant Google API calls (the locations were already fetched during connect).
  */
-async function selectLocation(businessId, locationId) {
+async function selectLocation(businessId, locationId, locationMeta) {
   const gbpAccount = await GbpAccount.findOne({ businessId });
   if (!gbpAccount) {
     throw new ApiError(404, "No Google connection found. Please connect first.", {
@@ -334,31 +355,18 @@ async function selectLocation(businessId, locationId) {
     });
   }
 
-  // Verify location exists by fetching it
-  const accessToken = await getValidAccessToken(gbpAccount);
-  const accounts = await listAccounts(accessToken);
-
-  let found = null;
-  for (const account of accounts) {
-    const locations = await listLocations(accessToken, account.accountId);
-    found = locations.find((loc) => loc.locationId === locationId);
-    if (found) {
-      found.accountId = account.accountId;
-      found.accountName = account.accountName;
-      break;
-    }
-  }
-
-  if (!found) {
-    throw new ApiError(404, "Location not found in your Google Business Profile.", {
+  if (!locationId) {
+    throw new ApiError(400, "locationId is required.", {
       code: ERROR_CODES.GBP_ACCOUNT_NOT_FOUND,
     });
   }
 
-  gbpAccount.gbpAccountId = found.accountId;
-  gbpAccount.gbpAccountName = found.accountName;
-  gbpAccount.gbpLocationId = found.locationId;
-  gbpAccount.gbpLocationName = found.locationName;
+  // Use metadata passed from the picker (originally fetched during connect)
+  // instead of making additional Google API calls.
+  gbpAccount.gbpLocationId = locationId;
+  gbpAccount.gbpLocationName = locationMeta?.locationName || locationId;
+  gbpAccount.gbpAccountId = locationMeta?.accountId || gbpAccount.gbpAccountId || "";
+  gbpAccount.gbpAccountName = locationMeta?.accountName || gbpAccount.gbpAccountName || "";
   await gbpAccount.save();
 
   return gbpAccount;

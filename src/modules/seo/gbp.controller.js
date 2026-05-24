@@ -109,7 +109,7 @@ const handleCallback = asyncHandler(async (req, res) => {
  * User selects which GBP location to connect (when they have multiple).
  */
 const selectLocation = asyncHandler(async (req, res) => {
-  const { locationId } = req.body;
+  const { locationId, locationName, accountId, accountName } = req.body;
 
   if (!locationId || typeof locationId !== "string") {
     throw new ApiError(400, "locationId is required.", {
@@ -119,7 +119,8 @@ const selectLocation = asyncHandler(async (req, res) => {
 
   const gbpAccount = await gbpOAuthService.selectLocation(
     req.business._id,
-    locationId.trim()
+    locationId.trim(),
+    { locationName, accountId, accountName }
   );
 
   logger.info("[gbp] location selected", {
