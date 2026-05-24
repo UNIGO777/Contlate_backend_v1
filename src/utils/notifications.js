@@ -61,10 +61,16 @@ const TEMPLATES = {
     title: "Time to update your offers",
     body: "Your plan renews soon. Want to add new offers this month?",
   }),
-  SOCIAL_ACCOUNT_EXPIRED: ({ platform, accountName }) => ({
+  SOCIAL_ACCOUNT_EXPIRED: ({ platform, accountName, reason }) => ({
     notifType: "account_expired",
     title: "Social account disconnected",
-    body: `Your ${accountName || platform} account needs to be reconnected to continue publishing.`,
+    body: reason || `Your ${accountName || platform} account needs to be reconnected to continue publishing.`,
+    emailTemplate: "account_expired",
+  }),
+  TOKEN_EXPIRING_SOON: ({ platform, accountName, daysLeft }) => ({
+    notifType: "account_warning",
+    title: "Connection expiring soon",
+    body: `Your ${accountName || platform} connection will expire in ${daysLeft || "a few"} day${daysLeft === 1 ? "" : "s"}. Reconnect now to avoid interruption.`,
     emailTemplate: "account_expired",
   }),
   PUBLISH_SUCCESS: ({ platform, accountName }) => ({
@@ -78,10 +84,10 @@ const TEMPLATES = {
     body: `Could not publish to ${accountName || platform || "your account"}. ${error ? error.slice(0, 100) : ""}`.trim(),
     emailTemplate: "publish_failed",
   }),
-  ACCOUNT_DISCONNECTED: ({ platform, accountName }) => ({
+  ACCOUNT_DISCONNECTED: ({ platform, accountName, reason }) => ({
     notifType: "account_disconnected",
     title: "Account disconnected",
-    body: `Your ${accountName || platform} account was disconnected. Reconnect to resume publishing.`,
+    body: reason || `Your ${accountName || platform} account was disconnected. Reconnect to resume publishing.`,
     emailTemplate: "account_disconnected",
   }),
   PERMISSIONS_REVOKED: ({ platform, accountName }) => ({
@@ -95,10 +101,10 @@ const TEMPLATES = {
     title: "Post going live soon ⏰",
     body: `One of your scheduled posts goes live in ${minutesLeft || 30} minutes.`,
   }),
-  SCHEDULE_FAILED: ({ platform, accountName, error }) => ({
+  SCHEDULE_FAILED: ({ platform, accountName, error, reason, paused }) => ({
     notifType: "schedule_failed",
-    title: "Scheduled post failed",
-    body: `Your scheduled post to ${accountName || platform || "your account"} failed after multiple attempts.`,
+    title: paused ? "Scheduled post paused" : "Scheduled post failed",
+    body: reason || `Your scheduled post to ${accountName || platform || "your account"} failed after multiple attempts.`,
     emailTemplate: "publish_failed",
   }),
   GENERAL: ({ title, body }) => ({

@@ -90,7 +90,23 @@ const refreshMetaToken = async (account) => {
     }
   }
 
-  await SocialAccount.findByIdAndUpdate(account._id, { $set: updates });
+  // Optimistic locking: only update if tokenVersion hasn't changed since we read it
+  const currentVersion = account.tokenVersion || 0;
+  const result = await SocialAccount.findOneAndUpdate(
+    { _id: account._id, tokenVersion: currentVersion },
+    {
+      $set: updates,
+      $inc: { tokenVersion: 1 },
+    }
+  );
+
+  if (!result) {
+    // Another process already refreshed this token — not an error
+    logger.info("[tokenRefresh] skipped (token already refreshed by another process)", {
+      accountId: account._id.toString(),
+    });
+    return { tokenExpiresAt, skipped: true };
+  }
 
   // Also refresh the paired Instagram account that shares the same pageId
   if (account.platform === SOCIAL_PLATFORMS.FACEBOOK && account.pageId) {
@@ -110,6 +126,7 @@ const refreshMetaToken = async (account) => {
           // Instagram uses the same page access token as the parent FB account
           ...(updates.accessToken ? { accessToken: updates.accessToken } : {}),
         },
+        $inc: { tokenVersion: 1 },
       }
     );
   }
@@ -117,24 +134,95 @@ const refreshMetaToken = async (account) => {
   return { tokenExpiresAt };
 };
 
+/**
+ * Send a notification to the account owner (fire-and-forget).
+ */
+const notifyUser = (userId, type, data) => {
+  User.findById(userId).lean().then((user) => {
+    const opts = user ? { userEmail: user.email, userName: user.name } : {};
+    sendAppNotification(userId, type, data, opts);
+  }).catch(() => {
+    sendAppNotification(userId, type, data);
+  });
+};
+
+/**
+ * Proactive token expiry warnings: notify users whose tokens expire within 3 days
+ * and haven't already been warned.
+ */
+const sendExpiryWarnings = async (now) => {
+  const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+  const warningAccounts = await SocialAccount.find({
+    platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
+    status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+    tokenExpiresAt: { $lte: threeDaysFromNow, $gt: now },
+    setupIssues: { $ne: "token_expiring_soon" },
+  })
+    .limit(BATCH_SIZE)
+    .lean();
+
+  for (const account of warningAccounts) {
+    const daysLeft = Math.max(1, Math.ceil(
+      (account.tokenExpiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)
+    ));
+
+    await SocialAccount.findByIdAndUpdate(account._id, {
+      $set: { healthStatus: "warning" },
+      $addToSet: { setupIssues: "token_expiring_soon" },
+    }).catch(() => {});
+
+    notifyUser(account.userId, "TOKEN_EXPIRING_SOON", {
+      platform: account.platform,
+      accountName: account.accountName,
+      daysLeft,
+    });
+
+    logger.info("[tokenRefresh] expiry warning sent", {
+      accountId: account._id.toString(),
+      platform: account.platform,
+      daysLeft,
+    });
+  }
+
+  return warningAccounts.length;
+};
+
 const runOnce = async () => {
   const now = new Date();
   const accounts = await findExpiringAccounts(now);
+
+  // Send proactive expiry warnings (non-blocking)
+  sendExpiryWarnings(now).catch((e) =>
+    logger.warn("[tokenRefresh] expiry warning check failed", { message: e.message })
+  );
 
   if (!accounts.length) return { refreshed: 0, failed: 0 };
 
   let refreshed = 0;
   let failed = 0;
 
+  const { resumePausedSchedules } = require("./postPublisher.job");
+
   for (const account of accounts) {
     try {
-      const { tokenExpiresAt } = await refreshMetaToken(account);
+      const { tokenExpiresAt, skipped } = await refreshMetaToken(account);
       refreshed++;
       logger.info("[tokenRefresh] refreshed", {
         accountId: account._id.toString(),
         platform: account.platform,
         tokenExpiresAt,
       });
+
+      // After successful refresh: clear expiry warning and resume paused schedules
+      if (!skipped) {
+        await SocialAccount.findByIdAndUpdate(account._id, {
+          $pull: { setupIssues: "token_expiring_soon" },
+        }).catch(() => {});
+
+        // Auto-resume paused schedules for this account
+        resumePausedSchedules(account._id).catch(() => {});
+      }
     } catch (err) {
       failed++;
       logger.error("[tokenRefresh] refresh failed", {
@@ -154,12 +242,10 @@ const runOnce = async () => {
           },
         }).catch(() => {});
 
-        const notifData = { platform: account.platform, accountName: account.accountName };
-        User.findById(account.userId).lean().then((user) => {
-          const opts = user ? { userEmail: user.email, userName: user.name } : {};
-          sendAppNotification(account.userId, "SOCIAL_ACCOUNT_EXPIRED", notifData, opts);
-        }).catch(() => {
-          sendAppNotification(account.userId, "SOCIAL_ACCOUNT_EXPIRED", notifData);
+        notifyUser(account.userId, "SOCIAL_ACCOUNT_EXPIRED", {
+          platform: account.platform,
+          accountName: account.accountName,
+          reason: "Your connection could not be renewed automatically. Please reconnect manually to continue publishing.",
         });
       }
     }

@@ -1,6 +1,7 @@
 const logger = require("../core/logger");
 const { SCHEDULE_STATUS } = require("../constants/scheduleStatus");
 const { CONTENT_STATUS } = require("../constants/contentStatus");
+const { SOCIAL_ACCOUNT_STATUS } = require("../constants/socialAccountStatus");
 const Schedule = require("../modules/schedule/schedule.model");
 const Content = require("../modules/content/content.model");
 const ContentPlan = require("../modules/poster/contentPlan.model");
@@ -50,11 +51,140 @@ const extractMetaErrorCode = (err) => {
   return match ? match[1] : "";
 };
 
+/**
+ * Determine failure type from error.
+ * Uses structured fields from graphFetch errors when available,
+ * falls back to heuristic classification.
+ */
+const classifyFailure = (err) => {
+  // Structured failureType from graphFetch → classifyMetaError
+  if (err.failureType) return err.failureType;
+
+  const code = err.metaCode || parseInt(extractMetaErrorCode(err), 10);
+
+  // Rate limit
+  if (err.isRateLimit || code === 4 || code === 17 || code === 341) return "retryable";
+
+  // Auth / permission errors → user needs to reconnect
+  if (err.isAuthError || code === 190 || code === 200 || code === 10) return "recoverable";
+
+  // Content policy / spam
+  if (code === 368 || code === 2207051) return "permanent";
+
+  // Server errors → retryable
+  if (err.statusCode >= 500) return "retryable";
+
+  // Network errors → retryable
+  if (err.code === "ECONNRESET" || err.code === "ETIMEDOUT" || err.code === "ENOTFOUND") return "retryable";
+
+  // Default: retryable (benefit of the doubt)
+  return "retryable";
+};
+
+/**
+ * Send a notification to the schedule owner (fire-and-forget).
+ */
+const notifyUser = (userId, type, data) => {
+  User.findById(userId).lean().then((user) => {
+    const opts = user ? { userEmail: user.email, userName: user.name } : {};
+    sendAppNotification(userId, type, data, opts);
+  }).catch(() => {
+    sendAppNotification(userId, type, data);
+  });
+};
+
 const markFailed = async (schedule, err, account) => {
   schedule.publishAttempts += 1;
   schedule.lastError = err.message?.slice(0, 500) || "Unknown error";
   schedule.lockedAt = null;
 
+  const errorCode = extractMetaErrorCode(err);
+  const failureType = classifyFailure(err);
+
+  // Branch on failure type
+  if (failureType === "permanent") {
+    // ── PERMANENT: content itself is the problem, no retry will help ──
+    schedule.status = SCHEDULE_STATUS.FAILED;
+    await schedule.save();
+
+    PublishLog.create({
+      scheduleId: schedule._id,
+      socialAccountId: schedule.socialAccountId,
+      contentId: schedule.contentId,
+      userId: schedule.userId,
+      businessId: schedule.businessId,
+      platform: account?.platform || "unknown",
+      publishType: "scheduled",
+      status: "failed",
+      errorMessage: schedule.lastError,
+      errorCode,
+      attempt: schedule.publishAttempts,
+      executedAt: new Date(),
+    }).catch((e) => logger.warn("[postPublisher] failed to create publish log", { message: e.message }));
+
+    notifyUser(schedule.userId, "SCHEDULE_FAILED", {
+      platform: account?.platform || "unknown",
+      accountName: account?.accountName || "",
+      error: schedule.lastError,
+      reason: "Your post could not be published due to a content policy violation or invalid media.",
+    });
+
+    logger.warn("[postPublisher] permanent failure", {
+      scheduleId: schedule._id.toString(),
+      errorCode,
+      failureType,
+    });
+    return;
+  }
+
+  if (failureType === "recoverable") {
+    // ── RECOVERABLE: user action needed (reconnect, re-grant permissions) ──
+    schedule.status = SCHEDULE_STATUS.PAUSED;
+    await schedule.save();
+
+    PublishLog.create({
+      scheduleId: schedule._id,
+      socialAccountId: schedule.socialAccountId,
+      contentId: schedule.contentId,
+      userId: schedule.userId,
+      businessId: schedule.businessId,
+      platform: account?.platform || "unknown",
+      publishType: "scheduled",
+      status: "retrying",
+      errorMessage: schedule.lastError,
+      errorCode,
+      attempt: schedule.publishAttempts,
+      executedAt: new Date(),
+    }).catch((e) => logger.warn("[postPublisher] failed to create publish log", { message: e.message }));
+
+    // Mark account as unhealthy
+    if (account) {
+      const accountUpdates = { healthStatus: "warning" };
+      if (errorCode === "190") {
+        accountUpdates.status = SOCIAL_ACCOUNT_STATUS.EXPIRED;
+        accountUpdates.healthStatus = "critical";
+        accountUpdates.disconnectReason = "token_expired";
+      }
+      SocialAccount.findByIdAndUpdate(account._id, { $set: accountUpdates }).catch(() => {});
+    }
+
+    notifyUser(schedule.userId, "SCHEDULE_FAILED", {
+      platform: account?.platform || "unknown",
+      accountName: account?.accountName || "",
+      error: schedule.lastError,
+      reason: "Your scheduled post is paused. Fix the issue and it will automatically retry.",
+      paused: true,
+    });
+
+    logger.warn("[postPublisher] recoverable failure — schedule paused", {
+      scheduleId: schedule._id.toString(),
+      errorCode,
+      failureType,
+    });
+    return;
+  }
+
+  // ── RETRYABLE: temporary issue, retry with backoff ──
   const isTerminal = schedule.publishAttempts >= MAX_ATTEMPTS;
   if (isTerminal) {
     schedule.status = SCHEDULE_STATUS.FAILED;
@@ -66,8 +196,6 @@ const markFailed = async (schedule, err, account) => {
   }
   await schedule.save();
 
-  // Create publish log for this failed attempt
-  const errorCode = extractMetaErrorCode(err);
   PublishLog.create({
     scheduleId: schedule._id,
     socialAccountId: schedule.socialAccountId,
@@ -86,23 +214,16 @@ const markFailed = async (schedule, err, account) => {
   // Mark account as expired if token error (Meta code 190)
   if (errorCode === "190" && account) {
     SocialAccount.findByIdAndUpdate(account._id, {
-      $set: { status: "expired", healthStatus: "critical", disconnectReason: "token_expired" },
+      $set: { status: SOCIAL_ACCOUNT_STATUS.EXPIRED, healthStatus: "critical", disconnectReason: "token_expired" },
     }).catch(() => {});
   }
 
   // Notify user only on terminal failure (all retries exhausted)
   if (isTerminal) {
-    const notifData = {
+    notifyUser(schedule.userId, "SCHEDULE_FAILED", {
       platform: account?.platform || "unknown",
       accountName: account?.accountName || "",
       error: schedule.lastError,
-    };
-    // Fire-and-forget — fetch user for email, fall back to push-only
-    User.findById(schedule.userId).lean().then((user) => {
-      const opts = user ? { userEmail: user.email, userName: user.name } : {};
-      sendAppNotification(schedule.userId, "SCHEDULE_FAILED", notifData, opts);
-    }).catch(() => {
-      sendAppNotification(schedule.userId, "SCHEDULE_FAILED", notifData);
     });
   }
 };
@@ -126,6 +247,15 @@ const processOne = async (schedule) => {
   if (!account) throw new Error("Social account was removed before publishing.");
   if (content.status === CONTENT_STATUS.FAILED) {
     throw new Error("Content is in a failed state.");
+  }
+
+  // Pre-publish permission check (uses cached grantedScopes — no API call)
+  const metaService = require("../services/meta.service");
+  const pubCheck = metaService.canAccountPublish(account);
+  if (!pubCheck.allowed) {
+    const err = new Error(pubCheck.reason);
+    err.failureType = "recoverable";
+    throw err;
   }
 
   const result = await socialService.publishToSocial({ account, content });
@@ -287,6 +417,7 @@ const runOnce = async () => {
       logger.error("[postPublisher] publish failed", {
         scheduleId: schedule._id.toString(),
         message: err.message,
+        failureType: classifyFailure(err),
       });
       // Try to load the account for error classification (token expiry etc.)
       const acct = await SocialAccount.findById(schedule.socialAccountId).catch(() => null);
@@ -311,6 +442,36 @@ const runOnce = async () => {
   }
 
   return { processed, failed };
+};
+
+/**
+ * Resume all PAUSED schedules for a specific social account.
+ * Called after successful reconnect or token refresh.
+ */
+const resumePausedSchedules = async (socialAccountId) => {
+  const result = await Schedule.updateMany(
+    {
+      socialAccountId,
+      status: SCHEDULE_STATUS.PAUSED,
+    },
+    {
+      $set: {
+        status: SCHEDULE_STATUS.PENDING,
+        publishAttempts: 0,
+        lastError: "",
+        scheduledAt: new Date(), // publish immediately on next tick
+      },
+    }
+  );
+
+  if (result.modifiedCount > 0) {
+    logger.info("[postPublisher] resumed paused schedules", {
+      socialAccountId: socialAccountId.toString(),
+      count: result.modifiedCount,
+    });
+  }
+
+  return result.modifiedCount;
 };
 
 let timer = null;
@@ -340,4 +501,4 @@ const stop = () => {
   }
 };
 
-module.exports = { start, stop, runOnce };
+module.exports = { start, stop, runOnce, resumePausedSchedules };

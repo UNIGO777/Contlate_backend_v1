@@ -4,6 +4,7 @@ const SCHEDULE_STATUS = Object.freeze({
   PUBLISHED: "published",
   FAILED: "failed",
   CANCELLED: "cancelled",
+  PAUSED: "paused",
 });
 
 module.exports = {

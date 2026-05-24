@@ -3,6 +3,7 @@ const SOCIAL_ACCOUNT_STATUS = Object.freeze({
   DISCONNECTED: "disconnected",
   EXPIRED: "expired",
   ERROR: "error",
+  PENDING_SETUP: "pending_setup",
 });
 
 module.exports = {

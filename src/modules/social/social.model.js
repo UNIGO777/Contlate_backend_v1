@@ -74,6 +74,19 @@ const socialAccountSchema = new mongoose.Schema(
       canPublishStories: { type: Boolean, default: false },
     },
 
+    // --- Granted scopes (cached from health check / OAuth) ---
+    grantedScopes: {
+      type: [String],
+      default: [],
+    },
+
+    // --- Scope type used during OAuth (progressive flow tracking) ---
+    oauthScopeType: {
+      type: String,
+      enum: ["connect", "publish", "full"],
+      default: "full",
+    },
+
     // --- Onboarding state ---
     setupIssues: [
       {
@@ -83,9 +96,18 @@ const socialAccountSchema = new mongoose.Schema(
           "no_instagram",
           "personal_instagram",
           "missing_permissions",
+          "token_expiring_soon",
+          "ig_unlinked",
+          "page_access_lost",
         ],
       },
     ],
+
+    // --- Pending placeholder cleanup (TTL index auto-deletes expired entries) ---
+    pendingExpiresAt: {
+      type: Date,
+      default: null,
+    },
 
     // --- Health tracking ---
     healthStatus: {
@@ -108,6 +130,8 @@ const socialAccountSchema = new mongoose.Schema(
         "page_deauthorized",
         "data_deletion",
         "data_deletion_request",
+        "ig_unlinked",
+        "page_access_lost",
       ],
       default: null,
     },
@@ -119,6 +143,9 @@ const socialAccountSchema = new mongoose.Schema(
 );
 
 socialAccountSchema.index({ userId: 1, platform: 1, accountId: 1 }, { unique: true });
+
+// TTL index: auto-delete pending_setup placeholder accounts after their expiry
+socialAccountSchema.index({ pendingExpiresAt: 1 }, { expireAfterSeconds: 0, sparse: true });
 
 const SocialAccount = mongoose.model("SocialAccount", socialAccountSchema);
 

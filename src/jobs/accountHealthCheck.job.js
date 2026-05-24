@@ -46,48 +46,278 @@ const findAccountsToCheck = async () => {
 };
 
 /**
- * Verify an account's token is still valid by calling GET /me/permissions.
- * Returns { healthy: true } or { healthy: false, reason: "..." }.
+ * Send a notification to the account owner (fire-and-forget).
  */
-const checkAccountHealth = async (account) => {
-  const rawToken = account.userAccessToken || account.accessToken;
-  if (!rawToken) return { healthy: false, reason: "no_token" };
+const notifyUser = (userId, type, data) => {
+  User.findById(userId)
+    .lean()
+    .then((user) => {
+      const opts = user ? { userEmail: user.email, userName: user.name } : {};
+      sendAppNotification(userId, type, data, opts);
+    })
+    .catch(() => {
+      sendAppNotification(userId, type, data);
+    });
+};
 
-  const token = safeDecrypt(rawToken);
-  if (!token) return { healthy: false, reason: "empty_token" };
-
+/**
+ * Check token validity and permissions.
+ * Returns { tokenValid, grantedScopes, declined, missing }.
+ */
+const checkTokenAndPermissions = async (token) => {
+  // Step 1: Verify token is valid
   try {
-    const data = await metaService.graphFetch("/me/permissions", {
+    await metaService.graphFetch("/me", {
       searchParams: { access_token: token },
     });
-
-    // Check if any required permission is declined
-    const permissions = data.data || [];
-    const requiredScopes = [
-      "pages_show_list",
-      "pages_manage_posts",
-      "pages_read_engagement",
-    ];
-
-    const declined = requiredScopes.filter((scope) => {
-      const perm = permissions.find((p) => p.permission === scope);
-      return !perm || perm.status !== "granted";
-    });
-
-    if (declined.length) {
-      return { healthy: false, reason: "permissions_missing", declined };
-    }
-
-    return { healthy: true };
   } catch (err) {
-    // Token is invalid or revoked
-    const isAuthError = /invalid|expired|revoked|token|190|102/i.test(err.message);
-    if (isAuthError) {
-      return { healthy: false, reason: "token_invalid" };
+    if (err.isAuthError || err.metaCode === 190) {
+      return { tokenValid: false, reason: "token_invalid" };
     }
-    // Network/transient error — don't mark unhealthy
+    throw err; // transient — re-throw to skip this account
+  }
+
+  // Step 2: Check permissions
+  const { granted, declined, missing } = await metaService.detectMissingScopes(token);
+
+  const requiredMissing = metaService.PUBLISH_SCOPES.filter(
+    (s) => !granted.includes(s)
+  );
+
+  return {
+    tokenValid: true,
+    grantedScopes: granted,
+    declined,
+    missing,
+    permissionsMissing: requiredMissing.length > 0,
+    requiredMissing,
+  };
+};
+
+/**
+ * Check if a Facebook page still exists and if its IG is still linked/professional.
+ */
+const checkPageHealth = async (account, userToken) => {
+  const issues = [];
+
+  // Only Facebook accounts have pages to check
+  if (account.platform !== SOCIAL_PLATFORMS.FACEBOOK) return { issues };
+
+  try {
+    const pages = await metaService.listManagedPages(userToken);
+    const myPage = pages.find((p) => p.pageId === account.accountId);
+
+    if (!myPage) {
+      return { issues: ["page_deleted"], pageDeleted: true };
+    }
+
+    // Check canPublish (page role)
+    if (!myPage.canPublish) {
+      issues.push("page_access_lost");
+    }
+
+    // Check Instagram linkage
+    const igAccount = await SocialAccount.findOne({
+      userId: account.userId,
+      platform: SOCIAL_PLATFORMS.INSTAGRAM,
+      pageId: account.pageId,
+      status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
+    }).lean();
+
+    if (igAccount) {
+      // IG account exists in DB — check if still linked on Meta side
+      if (!myPage.instagramAccountId) {
+        issues.push("ig_unlinked");
+      } else {
+        // Check if IG is still professional
+        try {
+          const detail = await metaService.getPageDetailedStatus(myPage, userToken);
+          if (detail.instagram?.linked && !detail.instagram?.isProfessional) {
+            issues.push("personal_instagram");
+          }
+        } catch {
+          // Non-fatal — IG type check failed
+        }
+      }
+    }
+
+    return { issues, pageDeleted: false };
+  } catch (err) {
+    if (err.isRateLimit) {
+      logger.warn("[accountHealthCheck] rate limited during page check", {
+        accountId: account._id.toString(),
+      });
+      return { issues, skipped: true };
+    }
     throw err;
   }
+};
+
+/**
+ * Apply health check results to a single account.
+ */
+const applyHealthResults = async (account, tokenResult, pageResult) => {
+  const updates = {};
+  const setupIssues = [];
+
+  // Update grantedScopes cache
+  if (tokenResult.grantedScopes) {
+    updates.grantedScopes = tokenResult.grantedScopes;
+  }
+
+  // Token invalid
+  if (!tokenResult.tokenValid) {
+    updates.status = SOCIAL_ACCOUNT_STATUS.EXPIRED;
+    updates.healthStatus = "critical";
+    updates.disconnectReason = "token_expired";
+
+    await SocialAccount.findByIdAndUpdate(account._id, { $set: updates });
+
+    notifyUser(account.userId, "SOCIAL_ACCOUNT_EXPIRED", {
+      platform: account.platform,
+      accountName: account.accountName,
+    });
+    return "token_invalid";
+  }
+
+  // Permissions missing
+  if (tokenResult.permissionsMissing) {
+    setupIssues.push("missing_permissions");
+    updates.status = SOCIAL_ACCOUNT_STATUS.EXPIRED;
+    updates.healthStatus = "critical";
+    updates.disconnectReason = "permissions_revoked";
+
+    await SocialAccount.findByIdAndUpdate(account._id, {
+      $set: { ...updates, setupIssues },
+    });
+
+    notifyUser(account.userId, "PERMISSIONS_REVOKED", {
+      platform: account.platform,
+      accountName: account.accountName,
+    });
+    return "permissions_missing";
+  }
+
+  // Page-level issues
+  if (pageResult?.pageDeleted) {
+    updates.status = SOCIAL_ACCOUNT_STATUS.DISCONNECTED;
+    updates.healthStatus = "critical";
+    updates.disconnectReason = "page_deleted";
+
+    await SocialAccount.findByIdAndUpdate(account._id, { $set: updates });
+
+    // Also disconnect linked IG account
+    await SocialAccount.updateMany(
+      {
+        userId: account.userId,
+        platform: SOCIAL_PLATFORMS.INSTAGRAM,
+        pageId: account.pageId,
+        status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
+      },
+      {
+        $set: {
+          status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+          healthStatus: "critical",
+          disconnectReason: "page_deleted",
+        },
+      }
+    );
+
+    // Cancel pending schedules for this account
+    const Schedule = require("../modules/schedule/schedule.model");
+    const { SCHEDULE_STATUS } = require("../constants/scheduleStatus");
+    await Schedule.updateMany(
+      {
+        socialAccountId: account._id,
+        status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PAUSED] },
+      },
+      { $set: { status: SCHEDULE_STATUS.CANCELLED } }
+    );
+
+    notifyUser(account.userId, "ACCOUNT_DISCONNECTED", {
+      platform: account.platform,
+      accountName: account.accountName,
+      reason: `Your Facebook Page '${account.accountName}' is no longer available.`,
+    });
+    return "page_deleted";
+  }
+
+  // IG unlinked from page
+  if (pageResult?.issues?.includes("ig_unlinked")) {
+    const igAccount = await SocialAccount.findOne({
+      userId: account.userId,
+      platform: SOCIAL_PLATFORMS.INSTAGRAM,
+      pageId: account.pageId,
+      status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
+    });
+
+    if (igAccount) {
+      await SocialAccount.findByIdAndUpdate(igAccount._id, {
+        $set: {
+          status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+          healthStatus: "critical",
+          disconnectReason: "ig_unlinked",
+          setupIssues: ["ig_unlinked"],
+        },
+      });
+
+      // Cancel IG pending schedules
+      const Schedule = require("../modules/schedule/schedule.model");
+      const { SCHEDULE_STATUS } = require("../constants/scheduleStatus");
+      await Schedule.updateMany(
+        {
+          socialAccountId: igAccount._id,
+          status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PAUSED] },
+        },
+        { $set: { status: SCHEDULE_STATUS.CANCELLED } }
+      );
+
+      notifyUser(account.userId, "ACCOUNT_DISCONNECTED", {
+        platform: "instagram",
+        accountName: igAccount.accountName,
+        reason: `Instagram account '${igAccount.accountName}' is no longer linked to your Facebook Page.`,
+      });
+    }
+  }
+
+  // Page access lost (non-publishable role)
+  if (pageResult?.issues?.includes("page_access_lost")) {
+    setupIssues.push("page_access_lost");
+    updates.healthStatus = "warning";
+  }
+
+  // Personal instagram
+  if (pageResult?.issues?.includes("personal_instagram")) {
+    const igAccount = await SocialAccount.findOne({
+      userId: account.userId,
+      platform: SOCIAL_PLATFORMS.INSTAGRAM,
+      pageId: account.pageId,
+      status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+    });
+
+    if (igAccount) {
+      await SocialAccount.findByIdAndUpdate(igAccount._id, {
+        $set: {
+          healthStatus: "warning",
+          setupIssues: ["personal_instagram"],
+        },
+      });
+    }
+  }
+
+  // All good — mark healthy
+  if (setupIssues.length === 0 && !pageResult?.issues?.length) {
+    updates.healthStatus = "healthy";
+    updates.setupIssues = [];
+  } else {
+    updates.setupIssues = setupIssues;
+    if (!updates.healthStatus) updates.healthStatus = "warning";
+  }
+
+  updates.lastSyncedAt = new Date();
+  await SocialAccount.findByIdAndUpdate(account._id, { $set: updates });
+
+  return setupIssues.length > 0 ? "issues_found" : "healthy";
 };
 
 const runOnce = async () => {
@@ -97,67 +327,63 @@ const runOnce = async () => {
   let checked = 0;
   let unhealthy = 0;
 
+  // Group Facebook accounts by userId to share token checks
+  // (avoid redundant /me calls for accounts under the same user)
+  const userTokenCache = new Map();
+
   for (const account of accounts) {
     try {
-      const result = await checkAccountHealth(account);
-      checked++;
-
-      if (!result.healthy) {
-        unhealthy++;
-
-        const newStatus =
-          result.reason === "permissions_missing"
-            ? SOCIAL_ACCOUNT_STATUS.EXPIRED
-            : SOCIAL_ACCOUNT_STATUS.EXPIRED;
-
-        const disconnectReason =
-          result.reason === "permissions_missing"
-            ? "permissions_revoked"
-            : "token_expired";
-
+      const rawToken = account.userAccessToken || account.accessToken;
+      if (!rawToken) {
         await SocialAccount.findByIdAndUpdate(account._id, {
           $set: {
-            status: newStatus,
+            status: SOCIAL_ACCOUNT_STATUS.EXPIRED,
             healthStatus: "critical",
-            disconnectReason,
+            disconnectReason: "token_expired",
           },
         });
-
-        // Notify user
-        const notifType =
-          result.reason === "permissions_missing"
-            ? "PERMISSIONS_REVOKED"
-            : "SOCIAL_ACCOUNT_EXPIRED";
-
-        const notifData = {
-          platform: account.platform,
-          accountName: account.accountName,
-        };
-
-        User.findById(account.userId)
-          .lean()
-          .then((user) => {
-            const opts = user
-              ? { userEmail: user.email, userName: user.name }
-              : {};
-            sendAppNotification(account.userId, notifType, notifData, opts);
-          })
-          .catch(() => {
-            sendAppNotification(account.userId, notifType, notifData);
-          });
-
-        logger.warn("[accountHealthCheck] account unhealthy", {
-          accountId: account._id.toString(),
-          platform: account.platform,
-          reason: result.reason,
-          declined: result.declined,
-        });
-      } else {
-        // Mark as healthy
-        await SocialAccount.findByIdAndUpdate(account._id, {
-          $set: { healthStatus: "healthy" },
-        });
+        checked++;
+        unhealthy++;
+        continue;
       }
+
+      const token = safeDecrypt(rawToken);
+      if (!token) {
+        await SocialAccount.findByIdAndUpdate(account._id, {
+          $set: {
+            status: SOCIAL_ACCOUNT_STATUS.EXPIRED,
+            healthStatus: "critical",
+            disconnectReason: "token_expired",
+          },
+        });
+        checked++;
+        unhealthy++;
+        continue;
+      }
+
+      // Check token + permissions (cached per user to avoid duplicate API calls)
+      const cacheKey = account.userId.toString();
+      let tokenResult = userTokenCache.get(cacheKey);
+      if (!tokenResult) {
+        tokenResult = await checkTokenAndPermissions(token);
+        userTokenCache.set(cacheKey, tokenResult);
+      }
+
+      // Check page-level health (only for FB accounts)
+      let pageResult = null;
+      if (account.platform === SOCIAL_PLATFORMS.FACEBOOK && tokenResult.tokenValid) {
+        pageResult = await checkPageHealth(account, token);
+      }
+
+      const result = await applyHealthResults(account, tokenResult, pageResult);
+      checked++;
+      if (result !== "healthy") unhealthy++;
+
+      logger.info("[accountHealthCheck] checked", {
+        accountId: account._id.toString(),
+        platform: account.platform,
+        result,
+      });
     } catch (err) {
       // Transient error (network, etc.) — skip, don't mark unhealthy
       logger.warn("[accountHealthCheck] check failed (transient)", {
@@ -167,10 +393,26 @@ const runOnce = async () => {
     }
   }
 
+  // Clean up stale pending_setup placeholders (older than 7 days)
+  // The TTL index handles this automatically, but this is a safety net
+  try {
+    const deleted = await SocialAccount.deleteMany({
+      status: SOCIAL_ACCOUNT_STATUS.PENDING_SETUP,
+      createdAt: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+    });
+    if (deleted.deletedCount > 0) {
+      logger.info("[accountHealthCheck] cleaned up stale pending_setup accounts", {
+        count: deleted.deletedCount,
+      });
+    }
+  } catch {
+    // Non-fatal
+  }
+
   if (checked) {
     await JobLog.create({
       type: JOB_TYPE,
-      status: unhealthy && !checked ? "failed" : "success",
+      status: unhealthy > 0 ? "failed" : "success",
       attempts: checked,
       lastRunAt: new Date(),
       errorMessage: unhealthy ? `${unhealthy} unhealthy account(s) found` : "",

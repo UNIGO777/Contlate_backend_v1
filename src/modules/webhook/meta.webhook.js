@@ -10,6 +10,7 @@ const Schedule = require("../schedule/schedule.model");
 const WebhookEvent = require("./webhookEvent.model");
 const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
 const { sendAppNotification } = require("../../utils/notifications");
+const metaService = require("../../services/meta.service");
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ const cancelPendingSchedules = async (accountIds) => {
   const result = await Schedule.updateMany(
     {
       socialAccountId: { $in: accountIds },
-      status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PROCESSING] },
+      status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PROCESSING, SCHEDULE_STATUS.PAUSED] },
     },
     { $set: { status: SCHEDULE_STATUS.CANCELLED, lastError: "Account disconnected" } }
   );
@@ -166,9 +167,12 @@ const handleEntry = async (object, entry) => {
     const changes = entry.changes || [];
     let action = "ignored";
     for (const change of changes) {
-      if (change.field === "feed" || change.field === "access") {
+      if (change.field === "feed") {
         await handlePageDeauthorization(entry.id);
         action = "page_deauthorized";
+      } else if (change.field === "access") {
+        await handlePageAccessChanged(entry.id);
+        action = "page_access_changed";
       } else if (change.field === "name" || change.field === "picture") {
         await handlePageMetadataChange(entry.id, change.field, change.value);
         action = action === "ignored" ? "page_metadata_updated" : action;
@@ -212,16 +216,6 @@ const handleUserDeauthorization = async (metaUserId) => {
     ],
   });
 
-  const notifyWithEmail = (account, type) => {
-    const notifData = { platform: account.platform, accountName: account.accountName };
-    User.findById(account.userId).lean().then((user) => {
-      const opts = user ? { userEmail: user.email, userName: user.name } : {};
-      sendAppNotification(account.userId, type, notifData, opts);
-    }).catch(() => {
-      sendAppNotification(account.userId, type, notifData);
-    });
-  };
-
   for (const account of accounts) {
     await SocialAccount.findByIdAndUpdate(account._id, {
       $set: {
@@ -233,11 +227,16 @@ const handleUserDeauthorization = async (metaUserId) => {
       },
     });
 
-    notifyWithEmail(account, "ACCOUNT_DISCONNECTED");
+    notifyWithEmail(account, "ACCOUNT_DISCONNECTED", { reason: "Meta user deauthorization" });
   }
 
   if (accounts.length) {
     await cancelPendingSchedules(accounts.map((a) => a._id));
+    // Invalidate state cache for all affected users
+    const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
+    for (const uid of userIds) {
+      metaService.invalidateStateCache(uid);
+    }
     logger.info("[meta.webhook] deauthorized accounts", { count: accounts.length, metaUserId });
   }
 };
@@ -277,8 +276,158 @@ const handlePageDeauthorization = async (pageId) => {
 
   if (accounts.length) {
     await cancelPendingSchedules(accounts.map((a) => a._id));
+    const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
+    for (const uid of userIds) {
+      metaService.invalidateStateCache(uid);
+    }
     logger.info("[meta.webhook] page deauthorized accounts", { count: accounts.length, pageId });
   }
+};
+
+/**
+ * When a page's access level changes (e.g., admin role revoked), verify
+ * whether the user can still publish and update account status accordingly.
+ *
+ * Unlike full deauthorization, access changes may be partial — the user may
+ * still have read access but lose publishing rights. We try to verify via
+ * the stored token and fall back to marking as "warning" if verification fails.
+ */
+const handlePageAccessChanged = async (pageId) => {
+  logger.info("[meta.webhook] page access changed", { pageId });
+
+  const accounts = await SocialAccount.find({
+    platform: SOCIAL_PLATFORMS.FACEBOOK,
+    status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+    $or: [{ accountId: pageId }, { pageId }],
+  });
+
+  if (!accounts.length) return;
+
+  for (const account of accounts) {
+    // Try to verify access using stored token
+    const rawToken = account.userAccessToken || account.accessToken;
+    if (!rawToken) {
+      // No token to verify — mark as disconnected
+      await SocialAccount.findByIdAndUpdate(account._id, {
+        $set: {
+          status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+          healthStatus: "critical",
+          disconnectReason: "page_access_lost",
+        },
+      });
+      notifyWithEmail(account, "ACCOUNT_DISCONNECTED", {
+        platform: account.platform,
+        accountName: account.accountName,
+        reason: `Your admin access to '${account.accountName}' has been removed.`,
+      });
+      continue;
+    }
+
+    let token;
+    try {
+      token = metaService.decryptToken(rawToken);
+    } catch {
+      // Can't decrypt — treat as access lost
+      await SocialAccount.findByIdAndUpdate(account._id, {
+        $set: {
+          status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+          healthStatus: "critical",
+          disconnectReason: "page_access_lost",
+        },
+      });
+      continue;
+    }
+
+    // Check if the page still appears in the user's managed pages
+    try {
+      const pages = await metaService.listManagedPages(token);
+      const myPage = pages.find((p) => p.pageId === account.accountId);
+
+      if (!myPage) {
+        // Page no longer in user's account — full disconnect
+        await SocialAccount.findByIdAndUpdate(account._id, {
+          $set: {
+            status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+            healthStatus: "critical",
+            disconnectReason: "page_access_lost",
+          },
+        });
+
+        // Also disconnect linked IG
+        await SocialAccount.updateMany(
+          {
+            userId: account.userId,
+            platform: SOCIAL_PLATFORMS.INSTAGRAM,
+            pageId: account.pageId,
+            status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
+          },
+          {
+            $set: {
+              status: SOCIAL_ACCOUNT_STATUS.DISCONNECTED,
+              healthStatus: "critical",
+              disconnectReason: "page_access_lost",
+            },
+          }
+        );
+
+        await cancelPendingSchedules([account._id]);
+
+        notifyWithEmail(account, "ACCOUNT_DISCONNECTED", {
+          platform: account.platform,
+          accountName: account.accountName,
+          reason: `Your admin access to '${account.accountName}' has been removed.`,
+        });
+      } else if (!myPage.canPublish) {
+        // User still has the page but can't publish (e.g., Analyst role)
+        await SocialAccount.findByIdAndUpdate(account._id, {
+          $set: {
+            healthStatus: "warning",
+            setupIssues: ["page_access_lost"],
+          },
+        });
+
+        notifyWithEmail(account, "SOCIAL_ACCOUNT_EXPIRED", {
+          platform: account.platform,
+          accountName: account.accountName,
+          reason: `Your publishing permissions on '${account.accountName}' have changed. You may need to request admin access.`,
+        });
+      }
+      // else: user still has full access — no action needed
+    } catch (err) {
+      // Verification failed (rate limit, network) — mark as warning, let health check verify later
+      logger.warn("[meta.webhook] page access verification failed", {
+        pageId,
+        accountId: account._id.toString(),
+        message: err.message,
+      });
+
+      await SocialAccount.findByIdAndUpdate(account._id, {
+        $set: {
+          healthStatus: "warning",
+          setupIssues: ["page_access_lost"],
+        },
+      });
+    }
+  }
+
+  // Invalidate state cache for all affected users
+  const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
+  for (const uid of userIds) {
+    metaService.invalidateStateCache(uid);
+  }
+};
+
+/**
+ * Send a notification with email support (fire-and-forget helper).
+ */
+const notifyWithEmail = (account, type, data) => {
+  const notifData = { platform: account.platform, accountName: account.accountName, ...data };
+  User.findById(account.userId).lean().then((user) => {
+    const opts = user ? { userEmail: user.email, userName: user.name } : {};
+    sendAppNotification(account.userId, type, notifData, opts);
+  }).catch(() => {
+    sendAppNotification(account.userId, type, notifData);
+  });
 };
 
 /**
@@ -314,6 +463,10 @@ const handlePermissionsRevoked = async (metaUserId) => {
 
   if (accounts.length) {
     await cancelPendingSchedules(accounts.map((a) => a._id));
+    const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
+    for (const uid of userIds) {
+      metaService.invalidateStateCache(uid);
+    }
     logger.info("[meta.webhook] permissions revoked accounts", { count: accounts.length, metaUserId });
   }
 };

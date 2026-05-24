@@ -30,11 +30,14 @@ router.post("/oauth/linkedin/exchange", oauthController.exchangeLinkedInOAuth);
 router.use(checkBusinessMiddleware);
 
 // ── Meta Account Management ───────────────────────────────────────────────────
+router.get("/meta/connection-status", metaController.getConnectionStatus);
 router.get("/meta/pages", metaController.listPages);
 router.post("/meta/select-pages", metaController.selectPages);
 router.get("/meta/instagram-status/:pageId", metaController.getInstagramStatus);
 router.get("/meta/permissions", metaController.checkPermissions);
 router.post("/meta/refresh-token/:socialAccountId", metaController.refreshToken);
+router.post("/meta/reconnect/:socialAccountId", metaController.reconnect);
+router.post("/meta/refresh-connection", metaController.refreshConnection);
 
 router.post("/", validateMiddleware(validateSocialAccountPayload), socialController.connectSocialAccount);
 router.get("/", socialController.listMySocialAccounts);
