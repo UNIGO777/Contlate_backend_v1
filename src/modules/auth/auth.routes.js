@@ -16,6 +16,7 @@ const {
   validateResetPasswordInput,
   validateRefreshInput,
   validateLogoutInput,
+  validateSocialExchangeInput,
 } = require("./auth.validation");
 
 const router = express.Router();
@@ -76,6 +77,25 @@ router.post(
   authRateLimiter,
   validateMiddleware(validateResetPasswordInput),
   authController.resetPassword
+);
+
+// ── Social Login ────────────────────────────────────────────────────────────
+router.get("/social/google/url", authRateLimiter, authController.socialGoogleUrl);
+router.get("/social/google/callback", authController.socialGoogleCallback);
+router.post(
+  "/social/google/exchange",
+  authRateLimiter,
+  validateMiddleware(validateSocialExchangeInput),
+  authController.socialGoogleExchange
+);
+
+router.get("/social/meta/url", authRateLimiter, authController.socialMetaUrl);
+router.get("/social/meta/callback", authController.socialMetaCallback);
+router.post(
+  "/social/meta/exchange",
+  authRateLimiter,
+  validateMiddleware(validateSocialExchangeInput),
+  authController.socialMetaExchange
 );
 
 router.post(

@@ -23,7 +23,9 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
-    passwordHash: { type: String, required: true },
+    passwordHash: { type: String, default: null },
+    googleId: { type: String, default: null, sparse: true, index: true },
+    metaId: { type: String, default: null, sparse: true, index: true },
     phone: { type: String, trim: true, default: null },
     avatarUrl: { type: String, trim: true, default: null },
     role: {

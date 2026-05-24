@@ -73,6 +73,9 @@ const env = {
     redirectUri:
       process.env.GOOGLE_REDIRECT_URI ||
       "http://localhost:5000/api/v1/business/gbp/callback",
+    authRedirectUri:
+      process.env.GOOGLE_AUTH_REDIRECT_URI ||
+      "http://localhost:5000/api/v1/auth/social/google/callback",
   },
 
   dataForSeo: {
@@ -106,6 +109,9 @@ const env = {
     redirectUri:
       process.env.META_REDIRECT_URI ||
       "http://localhost:5000/api/v1/social/oauth/meta/callback",
+    authRedirectUri:
+      process.env.META_AUTH_REDIRECT_URI ||
+      "http://localhost:5000/api/v1/auth/social/meta/callback",
     graphVersion: process.env.META_GRAPH_VERSION || "v21.0",
     oauthStateSecret: process.env.META_OAUTH_STATE_SECRET || process.env.JWT_SECRET,
     // Verify token you enter in the Meta App Dashboard when subscribing to webhooks

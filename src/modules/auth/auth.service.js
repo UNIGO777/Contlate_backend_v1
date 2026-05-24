@@ -136,6 +136,12 @@ const loginUser = async ({ email, password }) => {
     });
   }
 
+  if (!user.passwordHash) {
+    throw new ApiError(401, "This account uses social login. Please sign in with Google or Meta.", {
+      code: ERROR_CODES.AUTH_INVALID_CREDENTIALS,
+    });
+  }
+
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
     throw new ApiError(423, "Account temporarily locked. Try again later.", {
       code: ERROR_CODES.AUTH_ACCOUNT_LOCKED,
@@ -425,4 +431,5 @@ module.exports = {
   logout,
   sanitizeUser,
   signAccessToken,
+  buildSession,
 };
