@@ -324,11 +324,11 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   if (!code || !state) throw new ApiError(400, "Missing code or state.");
 
   const { userId: stateUserId, isReconnect } = metaService.verifyState(state);
-  if (stateUserId !== req.user._id.toString()) {
+  if (stateUserId !== req.user.id) {
     throw new ApiError(400, "OAuth state does not match current user.");
   }
 
-  const business = await Business.findOne({ userId: req.user._id });
+  const business = await Business.findOne({ userId: req.user.id });
   if (!business) {
     throw new ApiError(400, "Connect a business profile before connecting social accounts.");
   }
@@ -363,12 +363,12 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   const scopeType = req.body.scopeType || "connect";
 
   // Invalidate connection state cache
-  metaService.invalidateStateCache(req.user._id);
+  metaService.invalidateStateCache(req.user.id);
 
   // ── Reconnect flow: update existing accounts, mark missing pages ──
   if (isReconnect) {
     const existingAccounts = await SocialAccount.find({
-      userId: req.user._id,
+      userId: req.user.id,
       platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
       status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
     }).lean();
@@ -380,7 +380,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
       const encryptedPageToken = encrypt(page.pageAccessToken);
 
       const fbResult = await SocialAccount.findOneAndUpdate(
-        { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
+        { userId: req.user.id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
         {
           $set: {
             accessToken: encryptedPageToken,
@@ -397,7 +397,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
           },
           $inc: { tokenVersion: 1 },
           $setOnInsert: {
-            userId: req.user._id,
+            userId: req.user.id,
             businessId: business._id,
             platform: SOCIAL_PLATFORMS.FACEBOOK,
             accountName: page.pageName,
@@ -411,7 +411,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
       if (page.instagramAccountId) {
         const igResult = await SocialAccount.findOneAndUpdate(
-          { userId: req.user._id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
+          { userId: req.user.id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
           {
             $set: {
               accessToken: encryptedPageToken,
@@ -429,7 +429,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
             },
             $inc: { tokenVersion: 1 },
             $setOnInsert: {
-              userId: req.user._id,
+              userId: req.user.id,
               businessId: business._id,
               platform: SOCIAL_PLATFORMS.INSTAGRAM,
               accountName: page.instagramUsername || page.pageName,
@@ -469,7 +469,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
     // Clean up pending_setup placeholders
     await SocialAccount.deleteMany({
-      userId: req.user._id,
+      userId: req.user.id,
       status: SOCIAL_ACCOUNT_STATUS.PENDING_SETUP,
     });
 
@@ -494,14 +494,14 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   // If no pages, create a pending_setup placeholder to store the token
   if (pages.length === 0) {
     await SocialAccount.findOneAndUpdate(
-      { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: `pending_${req.user._id}` },
+      { userId: req.user.id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: `pending_${req.user.id}` },
       {
         $set: {
-          userId: req.user._id,
+          userId: req.user.id,
           businessId: business._id,
           platform: SOCIAL_PLATFORMS.FACEBOOK,
           accountName: "Pending Setup",
-          accountId: `pending_${req.user._id}`,
+          accountId: `pending_${req.user.id}`,
           accessToken: encryptedUserToken,
           userAccessToken: encryptedUserToken,
           tokenExpiresAt,
@@ -535,7 +535,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
     const conflicting = await SocialAccount.find({
       businessId: business._id,
-      userId: { $ne: req.user._id },
+      userId: { $ne: req.user.id },
       platform: { $in: [SOCIAL_PLATFORMS.FACEBOOK, SOCIAL_PLATFORMS.INSTAGRAM] },
       accountId: { $in: checkIds },
       status: { $ne: SOCIAL_ACCOUNT_STATUS.DISCONNECTED },
@@ -550,10 +550,10 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
     upserts.push(
       SocialAccount.findOneAndUpdate(
-        { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
+        { userId: req.user.id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: page.pageId },
         {
           $set: {
-            userId: req.user._id,
+            userId: req.user.id,
             businessId: business._id,
             platform: SOCIAL_PLATFORMS.FACEBOOK,
             accountName: page.pageName,
@@ -580,10 +580,10 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
     if (page.instagramAccountId) {
       upserts.push(
         SocialAccount.findOneAndUpdate(
-          { userId: req.user._id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
+          { userId: req.user.id, platform: SOCIAL_PLATFORMS.INSTAGRAM, accountId: page.instagramAccountId },
           {
             $set: {
-              userId: req.user._id,
+              userId: req.user.id,
               businessId: business._id,
               platform: SOCIAL_PLATFORMS.INSTAGRAM,
               accountName: page.instagramUsername || page.pageName,
@@ -612,7 +612,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
     // Clean up any pending_setup placeholder
     await SocialAccount.deleteMany({
-      userId: req.user._id,
+      userId: req.user.id,
       status: SOCIAL_ACCOUNT_STATUS.PENDING_SETUP,
     });
 
@@ -644,10 +644,10 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   // Multiple pages — store user token on a temporary placeholder account
   // so the select-pages endpoint can retrieve it, then return pages list.
   await SocialAccount.findOneAndUpdate(
-    { userId: req.user._id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: pages[0].pageId },
+    { userId: req.user.id, platform: SOCIAL_PLATFORMS.FACEBOOK, accountId: pages[0].pageId },
     {
       $set: {
-        userId: req.user._id,
+        userId: req.user.id,
         businessId: business._id,
         platform: SOCIAL_PLATFORMS.FACEBOOK,
         accountName: pages[0].pageName,
@@ -672,7 +672,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
   let differentAccountHint = null;
   const newPageIds = new Set(pages.map((p) => p.pageId));
   const previousAccounts = await SocialAccount.find({
-    userId: req.user._id,
+    userId: req.user.id,
     platform: SOCIAL_PLATFORMS.FACEBOOK,
     platformAccountId: { $nin: [...newPageIds] },
     status: { $in: [SOCIAL_ACCOUNT_STATUS.CONNECTED, SOCIAL_ACCOUNT_STATUS.EXPIRED] },
@@ -708,7 +708,7 @@ const exchangeMetaOAuth = asyncHandler(async (req, res) => {
 
 // ── GET /social/oauth/linkedin/start ────────────────────────────────────────
 const startLinkedInOAuth = asyncHandler(async (req, res) => {
-  const { url } = linkedinService.getAuthorizeUrl(req.user._id);
+  const { url } = linkedinService.getAuthorizeUrl(req.user.id);
   return res.status(200).json(new ApiResponse(200, { url }, "Redirect to this URL."));
 });
 
@@ -721,7 +721,7 @@ const exchangeLinkedInOAuth = asyncHandler(async (req, res) => {
 
   linkedinService.verifyState(state);
 
-  const business = await Business.findOne({ userId: req.user._id });
+  const business = await Business.findOne({ userId: req.user.id });
   if (!business) {
     throw new ApiError(400, "Connect a business profile before connecting social accounts.");
   }
@@ -735,10 +735,10 @@ const exchangeLinkedInOAuth = asyncHandler(async (req, res) => {
   const authorUrn = `urn:li:person:${profile.sub}`;
 
   const account = await SocialAccount.findOneAndUpdate(
-    { userId: req.user._id, platform: SOCIAL_PLATFORMS.LINKEDIN, accountId: profile.sub },
+    { userId: req.user.id, platform: SOCIAL_PLATFORMS.LINKEDIN, accountId: profile.sub },
     {
       $set: {
-        userId: req.user._id,
+        userId: req.user.id,
         businessId: business._id,
         platform: SOCIAL_PLATFORMS.LINKEDIN,
         accountName: profile.name,
