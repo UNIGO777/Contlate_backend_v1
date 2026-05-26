@@ -110,10 +110,23 @@ const disconnectSocialAccount = async ({ userId, socialAccountId }) => {
   return sanitizeSocialAccount(account);
 };
 
+const deleteSocialAccount = async ({ userId, socialAccountId }) => {
+  ensureValidId(socialAccountId, "socialAccountId");
+
+  const account = await SocialAccount.findOne({ _id: socialAccountId, userId });
+
+  if (!account) {
+    throw new ApiError(404, "Social account not found.");
+  }
+
+  await account.deleteOne();
+};
+
 module.exports = {
   connectSocialAccount,
   listSocialAccountsByUserId,
   getSocialAccountById,
   updateSocialAccount,
   disconnectSocialAccount,
+  deleteSocialAccount,
 };

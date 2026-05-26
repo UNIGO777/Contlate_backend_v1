@@ -48,5 +48,6 @@ router.patch(
   socialController.updateMySocialAccount
 );
 router.post("/:socialAccountId/disconnect", socialController.disconnectMySocialAccount);
+router.delete("/:socialAccountId", socialController.deleteMySocialAccount);
 
 module.exports = router;

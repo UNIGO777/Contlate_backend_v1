@@ -56,10 +56,22 @@ const disconnectMySocialAccount = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { socialAccount }, "Social account disconnected successfully."));
 });
 
+const deleteMySocialAccount = asyncHandler(async (req, res) => {
+  await socialService.deleteSocialAccount({
+    userId: req.user.id,
+    socialAccountId: req.params.socialAccountId,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, null, "Social account deleted successfully."));
+});
+
 module.exports = {
   connectSocialAccount,
   listMySocialAccounts,
   getMySocialAccountById,
   updateMySocialAccount,
   disconnectMySocialAccount,
+  deleteMySocialAccount,
 };
