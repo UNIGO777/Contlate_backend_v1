@@ -12,7 +12,7 @@ const SocialAccount = require("./social.model");
 const startMetaOAuth = asyncHandler(async (req, res) => {
   // Default to "publish" (all scopes) so Business Portfolio pages are visible
   // via business_management permission and publishing works immediately.
-  const scopeType = req.query.scopeType || "publish";
+  const scopeType = req.query.scopeType || "connect";
   const { url } = metaService.getAuthorizeUrl(req.user.id, { scopeType });
   return res.status(200).json(new ApiResponse(200, { url, scopeType }, "Redirect the user to this URL."));
 });
