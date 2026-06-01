@@ -36,6 +36,12 @@ const env = {
   mobileDeepLinkBase: process.env.MOBILE_DEEP_LINK_BASE || "postengine:/",
 
   mongodbUri: process.env.MONGODB_URI,
+  // Optional: direct mongodb:// URI used when SRV resolution fails
+  mongodbUriFallback: process.env.MONGODB_URI_FALLBACK || "",
+  // Optional: comma-separated fallback DNS servers (default: 1.1.1.1,8.8.8.8)
+  dnsFallbackServers: process.env.DNS_FALLBACK_SERVERS
+    ? process.env.DNS_FALLBACK_SERVERS.split(",").map((s) => s.trim())
+    : null,
 
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
@@ -101,6 +107,18 @@ const env = {
     imageEffort: ["low", "medium", "high"].includes(process.env.POSTER_IMAGE_EFFORT)
       ? process.env.POSTER_IMAGE_EFFORT
       : "low",
+  },
+
+  instagram: {
+    appId: process.env.INSTAGRAM_APP_ID || "",
+    appSecret: process.env.INSTAGRAM_APP_SECRET || "",
+    redirectUri:
+      process.env.INSTAGRAM_REDIRECT_URI ||
+      "http://localhost:5000/api/v1/social/oauth/instagram/callback",
+    scopes:
+      process.env.INSTAGRAM_SCOPES ||
+      "instagram_business_basic,instagram_business_content_publish",
+    oauthStateSecret: process.env.INSTAGRAM_OAUTH_STATE_SECRET || process.env.JWT_SECRET,
   },
 
   meta: {

@@ -6,6 +6,7 @@ const { SOCIAL_ACCOUNT_STATUS } = require("../../constants/socialAccountStatus")
 const { encrypt } = require("../../core/tokenEncryption");
 const metaService = require("../../services/meta.service");
 const linkedinService = require("../../services/linkedin.service");
+const instagramService = require("../../services/instagram.service");
 const Business = require("../business/business.model");
 const SocialAccount = require("./social.model");
 
@@ -774,10 +775,97 @@ const exchangeLinkedInOAuth = asyncHandler(async (req, res) => {
   );
 });
 
+// ── GET /social/oauth/instagram/start ──────────────────────────────────────
+const startInstagramOAuth = asyncHandler(async (req, res) => {
+  const { url } = instagramService.getAuthorizeUrl(req.user.id);
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { url }, "Redirect the user to this URL."));
+});
+
+// ── POST /social/oauth/instagram/exchange ─────────────────────────────────
+const exchangeInstagramOAuth = asyncHandler(async (req, res) => {
+  const { code, state } = req.body;
+  if (!code || !state) throw new ApiError(400, "Missing code or state.");
+
+  const { userId: stateUserId } = instagramService.verifyState(state);
+  if (stateUserId !== req.user.id) {
+    throw new ApiError(400, "OAuth state does not match current user.");
+  }
+
+  const business = await Business.findOne({ userId: req.user.id });
+  if (!business) {
+    throw new ApiError(
+      400,
+      "Connect a business profile before connecting social accounts."
+    );
+  }
+
+  // Exchange code → short-lived token → long-lived token
+  const shortToken = await instagramService.exchangeCodeForToken(code);
+  const longToken = await instagramService.getLongLivedToken(
+    shortToken.accessToken
+  );
+  const profile = await instagramService.getProfile(longToken.accessToken);
+
+  const tokenExpiresAt = longToken.expiresIn
+    ? new Date(Date.now() + longToken.expiresIn * 1000)
+    : null;
+
+  // Upsert: prevents duplicates if same IG account already connected via FB
+  const account = await SocialAccount.findOneAndUpdate(
+    {
+      userId: req.user.id,
+      platform: SOCIAL_PLATFORMS.INSTAGRAM,
+      accountId: profile.userId,
+    },
+    {
+      $set: {
+        userId: req.user.id,
+        businessId: business._id,
+        platform: SOCIAL_PLATFORMS.INSTAGRAM,
+        accountName: profile.username || profile.name || "Instagram User",
+        accountId: profile.userId,
+        accessToken: encrypt(longToken.accessToken),
+        tokenExpiresAt,
+        tokenVersion: 1,
+        status: SOCIAL_ACCOUNT_STATUS.CONNECTED,
+        healthStatus: "healthy",
+        disconnectReason: null,
+        profilePictureUrl: profile.profilePictureUrl || "",
+        grantedScopes: instagramService.SCOPES,
+        lastSyncedAt: new Date(),
+        lastTokenRefreshedAt: new Date(),
+      },
+    },
+    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
+  );
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        connected: 1,
+        accounts: [
+          {
+            id: account._id.toString(),
+            platform: account.platform,
+            accountName: account.accountName,
+            accountId: account.accountId,
+          },
+        ],
+      },
+      "Instagram account connected."
+    )
+  );
+});
+
 module.exports = {
   startMetaOAuth,
   completeMetaOAuth,
   exchangeMetaOAuth,
   startLinkedInOAuth,
   exchangeLinkedInOAuth,
+  startInstagramOAuth,
+  exchangeInstagramOAuth,
 };

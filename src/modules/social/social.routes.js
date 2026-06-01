@@ -27,6 +27,10 @@ router.post("/oauth/meta/exchange", oauthController.exchangeMetaOAuth);
 router.get("/oauth/linkedin/start", oauthController.startLinkedInOAuth);
 router.post("/oauth/linkedin/exchange", oauthController.exchangeLinkedInOAuth);
 
+// ── Instagram OAuth (direct Instagram Business Login) ─────────────────────────
+router.get("/oauth/instagram/start", oauthController.startInstagramOAuth);
+router.post("/oauth/instagram/exchange", oauthController.exchangeInstagramOAuth);
+
 router.use(checkBusinessMiddleware);
 
 // ── Meta Account Management ───────────────────────────────────────────────────

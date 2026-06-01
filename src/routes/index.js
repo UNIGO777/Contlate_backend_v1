@@ -70,6 +70,19 @@ router.get("/social/oauth/meta/callback", (req, res, next) => {
   res.redirect(`${env.mobileDeepLinkBase}/social-callback?${params.toString()}`);
 });
 
+// Public — Instagram OAuth redirect: Instagram redirects here after approval/denial.
+// Same deep-link pattern as Meta — system browser can't pass auth headers.
+router.get("/social/oauth/instagram/callback", (req, res, next) => {
+  if (req.headers.authorization) return next();
+
+  const params = new URLSearchParams();
+  ["code", "state", "error", "error_description"].forEach((key) => {
+    if (req.query[key]) params.set(key, String(req.query[key]));
+  });
+  params.set("provider", "instagram");
+  res.redirect(`${env.mobileDeepLinkBase}/social-callback?${params.toString()}`);
+});
+
 // All routes below require a valid, non-suspended, non-deleted account
 router.use(authMiddleware);
 router.use("/users", userRoutes);
