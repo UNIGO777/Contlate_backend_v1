@@ -114,7 +114,7 @@ const env = {
     appSecret: process.env.INSTAGRAM_APP_SECRET || "",
     redirectUri:
       process.env.INSTAGRAM_REDIRECT_URI ||
-      "http://localhost:5000/api/v1/social/oauth/instagram/callback",
+      "http://localhost:5000/api/v1/social/auth/instagram/callback",
     scopes:
       process.env.INSTAGRAM_SCOPES ||
       "instagram_business_basic,instagram_business_content_publish",

@@ -72,7 +72,7 @@ router.get("/social/oauth/meta/callback", (req, res, next) => {
 
 // Public — Instagram OAuth redirect: Instagram redirects here after approval/denial.
 // Same deep-link pattern as Meta — system browser can't pass auth headers.
-router.get("/social/oauth/instagram/callback", (req, res, next) => {
+router.get("/social/auth/instagram/callback", (req, res, next) => {
   if (req.headers.authorization) return next();
 
   const params = new URLSearchParams();
