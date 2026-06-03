@@ -67,6 +67,7 @@ router.get("/social/oauth/meta/callback", (req, res, next) => {
   ["code", "state", "error", "error_description"].forEach((key) => {
     if (req.query[key]) params.set(key, String(req.query[key]));
   });
+  params.set("provider", "meta");
   res.redirect(`${env.mobileDeepLinkBase}/social-callback?${params.toString()}`);
 });
 
