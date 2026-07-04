@@ -427,13 +427,16 @@ async function getStatus(businessId) {
     return { connected: false };
   }
 
-  // Safety net: if syncing for more than 10 minutes, treat as pending_locations
-  // (in case the worker failed to update status after all retries)
+  // Safety net: if the sync job hasn't completed within SYNC_STALL_MS, treat it
+  // as pending_locations (in case the worker failed to update status after all
+  // retries) so the client stops polling and shows the retry UI instead of an
+  // endless spinner.
+  const SYNC_STALL_MS = 60 * 1000;
   let effectiveStatus = gbpAccount.status;
   if (
     effectiveStatus === "syncing" &&
     gbpAccount.connectedAt &&
-    Date.now() - gbpAccount.connectedAt.getTime() > 10 * 60 * 1000
+    Date.now() - gbpAccount.connectedAt.getTime() > SYNC_STALL_MS
   ) {
     effectiveStatus = "pending_locations";
     // Also update the DB so it doesn't keep returning syncing
