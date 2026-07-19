@@ -111,14 +111,6 @@ const validateLogoutInput = (req) => {
   return { value: { refreshToken: isNonEmptyString(refreshToken) ? refreshToken : null } };
 };
 
-const validateSocialExchangeInput = (req) => {
-  const { code, state } = req.body || {};
-  const details = [];
-  if (!isNonEmptyString(code)) details.push("code is required.");
-  if (!isNonEmptyString(state)) details.push("state is required.");
-  return finalize(details, { code: String(code).trim(), state: String(state).trim() });
-};
-
 module.exports = {
   validateRegisterInput,
   validateLoginInput,
@@ -129,5 +121,4 @@ module.exports = {
   validateResetPasswordInput,
   validateRefreshInput,
   validateLogoutInput,
-  validateSocialExchangeInput,
 };

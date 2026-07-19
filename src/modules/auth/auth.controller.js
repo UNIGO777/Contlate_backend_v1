@@ -2,8 +2,6 @@ const ApiResponse = require("../../core/ApiResponse");
 const asyncHandler = require("../../core/asyncHandler");
 const { OTP_PURPOSES } = require("../../constants/otpPurposes");
 const authService = require("./auth.service");
-const socialAuthService = require("./socialAuth.service");
-const env = require("../../config/env");
 
 const deviceFromReq = (req) => (req.headers["x-device"] ? String(req.headers["x-device"]) : null);
 
@@ -70,60 +68,6 @@ const logout = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, result, "Logged out."));
 });
 
-// ── Social Login ────────────────────────────────────────────────────────────
-
-const socialGoogleUrl = asyncHandler(async (_req, res) => {
-  const { url } = socialAuthService.getGoogleLoginUrl();
-  return res.status(200).json(new ApiResponse(200, { url }, "Google login URL generated."));
-});
-
-const socialGoogleCallback = asyncHandler(async (req, res) => {
-  const { code, state, error } = req.query;
-  const deepLinkBase = env.mobileDeepLinkBase;
-  if (error) {
-    const desc = req.query.error_description || error;
-    return res.redirect(`${deepLinkBase}/auth-callback?provider=google&error=${encodeURIComponent(desc)}`);
-  }
-  return res.redirect(
-    `${deepLinkBase}/auth-callback?provider=google&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
-  );
-});
-
-const socialGoogleExchange = asyncHandler(async (req, res) => {
-  const result = await socialAuthService.exchangeGoogleLogin({
-    code: req.validated.code,
-    state: req.validated.state,
-    device: deviceFromReq(req),
-  });
-  return res.status(200).json(new ApiResponse(200, result, "Google login successful."));
-});
-
-const socialMetaUrl = asyncHandler(async (_req, res) => {
-  const { url } = socialAuthService.getMetaLoginUrl();
-  return res.status(200).json(new ApiResponse(200, { url }, "Meta login URL generated."));
-});
-
-const socialMetaCallback = asyncHandler(async (req, res) => {
-  const { code, state, error } = req.query;
-  const deepLinkBase = env.mobileDeepLinkBase;
-  if (error) {
-    const desc = req.query.error_description || error;
-    return res.redirect(`${deepLinkBase}/auth-callback?provider=meta&error=${encodeURIComponent(desc)}`);
-  }
-  return res.redirect(
-    `${deepLinkBase}/auth-callback?provider=meta&code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
-  );
-});
-
-const socialMetaExchange = asyncHandler(async (req, res) => {
-  const result = await socialAuthService.exchangeMetaLogin({
-    code: req.validated.code,
-    state: req.validated.state,
-    device: deviceFromReq(req),
-  });
-  return res.status(200).json(new ApiResponse(200, result, "Meta login successful."));
-});
-
 module.exports = {
   register,
   login,
@@ -135,11 +79,5 @@ module.exports = {
   resetPassword,
   refresh,
   logout,
-  socialGoogleUrl,
-  socialGoogleCallback,
-  socialGoogleExchange,
-  socialMetaUrl,
-  socialMetaCallback,
-  socialMetaExchange,
   OTP_PURPOSES,
 };
