@@ -91,6 +91,10 @@ const env = {
     insightsTtlHours: toInt(process.env.GBP_INSIGHTS_TTL_HOURS, 24),
     insightsMinRefreshMinutes: toInt(process.env.GBP_INSIGHTS_MIN_REFRESH_MINUTES, 360),
     insightsWindowDays: toInt(process.env.GBP_INSIGHTS_WINDOW_DAYS, 30),
+    // Reviews move more often than daily metrics, but the v4 API is
+    // allowlisted and quota-limited, so they are cached too.
+    reviewsTtlHours: toInt(process.env.GBP_REVIEWS_TTL_HOURS, 6),
+    reviewsMinRefreshMinutes: toInt(process.env.GBP_REVIEWS_MIN_REFRESH_MINUTES, 30),
   },
 
   dataForSeo: {

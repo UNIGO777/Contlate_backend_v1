@@ -4,6 +4,7 @@ const asyncHandler = require("../../core/asyncHandler");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const gbpOAuthService = require("../../services/gbpOAuth.service");
 const gbpPerformanceService = require("../../services/gbpPerformance.service");
+const gbpReviewsService = require("../../services/gbpReviews.service");
 const aiSeoService = require("../ai-seo/aiSeo.service");
 const logger = require("../../core/logger");
 
@@ -216,9 +217,36 @@ const getInsights = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * GET /business/gbp/reviews
+ * Cached Google reviews for the connected location.
+ */
+const getReviews = asyncHandler(async (req, res) => {
+  const force = req.query.refresh === "1" || req.query.refresh === "true";
+  const data = await gbpReviewsService.getReviews(req.business._id, { force });
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        reviews: data.reviews,
+        averageRating: data.averageRating,
+        totalReviewCount: data.totalReviewCount,
+        unansweredCount: data.unansweredCount,
+        fetchedAt: data.fetchedAt,
+        cacheHit: !!data.cacheHit,
+        stale: !!data.stale,
+        throttled: !!data.throttled,
+      },
+      "Google Business Profile reviews."
+    )
+  );
+});
+
 module.exports = {
   getConnectUrl,
   getInsights,
+  getReviews,
   handleCallback,
   selectLocation,
   retryFetchLocations,

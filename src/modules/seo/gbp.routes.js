@@ -25,6 +25,9 @@ router.get("/status", gbpController.getStatus);
 // GET /business/gbp/insights — cached performance metrics (views/calls/directions)
 router.get("/insights", gbpController.getInsights);
 
+// GET /business/gbp/reviews — cached reviews for the connected location
+router.get("/reviews", gbpController.getReviews);
+
 // DELETE /business/gbp/disconnect — remove tokens, user can reconnect
 router.delete("/disconnect", gbpController.disconnect);
 
