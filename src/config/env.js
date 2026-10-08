@@ -84,6 +84,15 @@ const env = {
       "http://localhost:5000/api/v1/auth/social/google/callback",
   },
 
+  // Google Business Profile Performance API has a tight per-project daily
+  // quota, and these are daily-granularity metrics, so cached reads are the
+  // default and refreshes are floored.
+  gbp: {
+    insightsTtlHours: toInt(process.env.GBP_INSIGHTS_TTL_HOURS, 24),
+    insightsMinRefreshMinutes: toInt(process.env.GBP_INSIGHTS_MIN_REFRESH_MINUTES, 360),
+    insightsWindowDays: toInt(process.env.GBP_INSIGHTS_WINDOW_DAYS, 30),
+  },
+
   dataForSeo: {
     login: process.env.DATAFORSEO_LOGIN || "",
     password: process.env.DATAFORSEO_PASSWORD || "",
@@ -159,7 +168,16 @@ const env = {
 
   mail: {
     driver: process.env.MAIL_DRIVER || "console",
-    from: process.env.MAIL_FROM || "PostEngine <no-reply@postengine.local>",
+    from: process.env.MAIL_FROM || "Prachar <no-reply@prachar.local>",
+    replyTo: process.env.MAIL_REPLY_TO || "",
+    // Footer/CTA destinations. Anything left blank is omitted from the
+    // email rather than rendered as a dead link, which hurts deliverability.
+    siteUrl: process.env.MAIL_SITE_URL || "",
+    privacyUrl: process.env.MAIL_PRIVACY_URL || "",
+    termsUrl: process.env.MAIL_TERMS_URL || "",
+    supportEmail: process.env.MAIL_SUPPORT_EMAIL || "",
+    // List-Unsubscribe target; Gmail weighs its presence heavily.
+    unsubscribeUrl: process.env.MAIL_UNSUBSCRIBE_URL || "",
     smtp: {
       host: process.env.SMTP_HOST || "",
       port: toInt(process.env.SMTP_PORT, 587),

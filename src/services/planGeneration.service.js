@@ -20,7 +20,7 @@ const FIXED_DAYS = [
 ];
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a social-media content strategist for Postly, a scheduling tool for small businesses.
+const SYSTEM_PROMPT = `You are a social-media content strategist for Prachar, a scheduling tool for small businesses.
 Your job is to plan 26 poster concepts for Days 3 to 28 of a 28-day content calendar.
 
 STRICT RULES (never break these):

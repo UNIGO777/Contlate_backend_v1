@@ -22,6 +22,9 @@ router.post("/select-location", gbpController.selectLocation);
 // GET /business/gbp/status — check connection status
 router.get("/status", gbpController.getStatus);
 
+// GET /business/gbp/insights — cached performance metrics (views/calls/directions)
+router.get("/insights", gbpController.getInsights);
+
 // DELETE /business/gbp/disconnect — remove tokens, user can reconnect
 router.delete("/disconnect", gbpController.disconnect);
 

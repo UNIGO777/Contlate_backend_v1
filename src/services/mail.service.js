@@ -26,6 +26,30 @@ const getTransporter = () => {
   return cachedTransporter;
 };
 
+/* Transactional mail is one-to-one, so no bulk flags here. Gmail still
+   rewards a working List-Unsubscribe, and Auto-Submitted/Precedence stop
+   out-of-office replies bouncing back at the sender. */
+const buildDeliverabilityHeaders = () => {
+  const headers = {
+    "Auto-Submitted": "auto-generated",
+    "X-Auto-Response-Suppress": "All",
+  };
+
+  const unsub = [
+    env.mail.unsubscribeUrl && `<${env.mail.unsubscribeUrl}>`,
+    env.mail.supportEmail && `<mailto:${env.mail.supportEmail}?subject=unsubscribe>`,
+  ].filter(Boolean);
+
+  if (unsub.length) {
+    headers["List-Unsubscribe"] = unsub.join(", ");
+    if (env.mail.unsubscribeUrl) {
+      headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    }
+  }
+
+  return headers;
+};
+
 const send = async ({ to, subject, template, data, html, text }) => {
   const driver = env.mail.driver;
 
@@ -36,7 +60,7 @@ const send = async ({ to, subject, template, data, html, text }) => {
     if (!rendered) logger.warn("[mail] unknown template", { template });
   }
 
-  const finalSubject = subject || rendered?.subject || "Postly";
+  const finalSubject = subject || rendered?.subject || "Prachar";
   const finalHtml    = html    || rendered?.html;
   const finalText    = text    || rendered?.text;
 
@@ -57,9 +81,11 @@ const send = async ({ to, subject, template, data, html, text }) => {
       const info = await transporter.sendMail({
         from: env.mail.from,
         to,
+        replyTo: env.mail.replyTo || undefined,
         subject: finalSubject,
         text: finalText,
         html: finalHtml,
+        headers: buildDeliverabilityHeaders(),
       });
       logger.info("[mail:smtp] sent", { to, subject: finalSubject, messageId: info.messageId });
       return { delivered: true, driver, messageId: info.messageId };

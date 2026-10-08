@@ -3,6 +3,7 @@ const ApiError = require("../../core/ApiError");
 const asyncHandler = require("../../core/asyncHandler");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const gbpOAuthService = require("../../services/gbpOAuth.service");
+const gbpPerformanceService = require("../../services/gbpPerformance.service");
 const aiSeoService = require("../ai-seo/aiSeo.service");
 const logger = require("../../core/logger");
 
@@ -183,8 +184,41 @@ const disconnect = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * GET /business/gbp/insights
+ * Cached Google Business Profile performance metrics.
+ *
+ * Reads come from our own cache by default — Google is only called when the
+ * cache has expired. `?refresh=1` asks for an early refresh but is still
+ * floored by GBP_INSIGHTS_MIN_REFRESH_MINUTES to protect the daily quota.
+ */
+const getInsights = asyncHandler(async (req, res) => {
+  const force = req.query.refresh === "1" || req.query.refresh === "true";
+  const data = await gbpPerformanceService.getInsights(req.business._id, { force });
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        rangeStart: data.rangeStart,
+        rangeEnd: data.rangeEnd,
+        totals: data.totals,
+        previousTotals: data.previousTotals,
+        deltaPct: data.deltaPct,
+        daily: data.daily,
+        fetchedAt: data.fetchedAt,
+        cacheHit: !!data.cacheHit,
+        stale: !!data.stale,
+        throttled: !!data.throttled,
+      },
+      "Google Business Profile performance."
+    )
+  );
+});
+
 module.exports = {
   getConnectUrl,
+  getInsights,
   handleCallback,
   selectLocation,
   retryFetchLocations,

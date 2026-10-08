@@ -109,7 +109,7 @@ const TEMPLATES = {
   }),
   GENERAL: ({ title, body }) => ({
     notifType: "plan_day_ready",
-    title: title ?? "Postly",
+    title: title ?? "Prachar",
     body: body ?? "",
   }),
 };

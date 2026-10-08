@@ -3,7 +3,7 @@ const logger = require("../core/logger");
 
 const isConfigured = () => Boolean(env.openai.apiKey);
 
-const SYSTEM_PROMPT = `You are a senior copywriter for Postly, a social-media automation tool used by small businesses.
+const SYSTEM_PROMPT = `You are a senior copywriter for Prachar, a social-media automation tool used by small businesses.
 You write brand stories that are warm, specific, and human — never marketing-speak.
 
 Rules:
@@ -41,7 +41,7 @@ const buildUserPrompt = (input) => {
   return lines.join("\n");
 };
 
-const BUSINESS_PROFILE_SYSTEM_PROMPT = `You classify local business profiles for Postly.
+const BUSINESS_PROFILE_SYSTEM_PROMPT = `You classify local business profiles for Prachar.
 Return concise JSON only. No markdown. No explanations.
 
 JSON shape:
