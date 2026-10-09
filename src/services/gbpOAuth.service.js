@@ -260,6 +260,38 @@ async function listLocations(accessToken, accountId) {
  * The GBP sync worker handles all Google API communication with proper
  * rate limiting, delays, and exponential backoff retries.
  */
+/**
+ * Queue the location sync, replacing any job left over from a previous run.
+ *
+ * BullMQ de-duplicates on jobId, and this queue keeps finished jobs
+ * (removeOnComplete: 500 / removeOnFail: 1000). So a job id that has ever
+ * been used still exists, and a later `add` with the same id is silently
+ * ignored — which meant reconnecting never queued a sync at all and only a
+ * manual retry (which did remove the old job) worked.
+ *
+ * Returns false when a sync is genuinely running right now.
+ */
+async function queueLocationSync({ businessId, userId, delayMs }) {
+  const { getQueues } = require("../queues/queues");
+  const queues = getQueues();
+  const jobId = `gbp-sync-${businessId}`;
+
+  const existing = await queues.gbpSync.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "active") return false; // mid-run; don't race it
+    await existing.remove().catch(() => {});
+    logger.info("[gbp] removed stale sync job", { businessId: String(businessId), previousState: state });
+  }
+
+  await queues.gbpSync.add(
+    "sync-locations",
+    { businessId: businessId.toString(), userId: userId.toString() },
+    { jobId, delay: delayMs }
+  );
+  return true;
+}
+
 async function connectAndSaveTokens(userId, businessId, tokenData) {
   const { accessToken, refreshToken, tokenExpiry, scopes } = tokenData;
 
@@ -292,17 +324,13 @@ async function connectAndSaveTokens(userId, businessId, tokenData) {
 
   // Queue background job (deduplication: one job per business)
   try {
-    const { getQueues } = require("../queues/queues");
-    const queues = getQueues();
-    await queues.gbpSync.add(
-      "sync-locations",
-      { businessId: businessId.toString(), userId: userId.toString() },
-      {
-        jobId: `gbp-sync-${businessId}`, // deduplicate: only one sync per business
-        // Google rate-limits a fetch issued immediately after the grant.
-        delay: env.gbp.initialSyncDelayMs,
-      }
-    );
+    // Google rate-limits a fetch issued immediately after the grant, so this
+    // is deliberately delayed; the client shows a countdown for it.
+    await queueLocationSync({
+      businessId,
+      userId,
+      delayMs: env.gbp.initialSyncDelayMs,
+    });
 
     await GbpAccount.updateOne(
       { businessId },
@@ -353,36 +381,14 @@ async function retrySync(businessId) {
   await gbpAccount.save();
 
   try {
-    const { getQueues } = require("../queues/queues");
-    const queues = getQueues();
-
-    // BullMQ de-duplicates on jobId: if a job with this id still exists in
-    // ANY state, `add` is silently ignored. The old guard only removed
-    // completed/failed jobs, so a job sitting in `delayed` between backoff
-    // attempts swallowed every retry press while we still returned 200.
-    // Remove it whatever the state, except `active` — that one is mid-run.
-    const existingJob = await queues.gbpSync.getJob(`gbp-sync-${businessId}`);
-    if (existingJob) {
-      const state = await existingJob.getState();
-      if (state === "active") {
-        // Genuinely running right now; let it finish rather than racing it.
-        return { alreadySyncing: true, gbpAccount };
-      }
-      await existingJob.remove().catch(() => {});
-      logger.info("[gbp] removed stale sync job before retry", {
-        businessId: String(businessId),
-        previousState: state,
-      });
+    const queued = await queueLocationSync({
+      businessId,
+      userId: gbpAccount.userId,
+      delayMs: env.gbp.retrySyncDelayMs,
+    });
+    if (!queued) {
+      return { alreadySyncing: true, gbpAccount };
     }
-
-    await queues.gbpSync.add(
-      "sync-locations",
-      { businessId: businessId.toString(), userId: gbpAccount.userId.toString() },
-      {
-        jobId: `gbp-sync-${businessId}`,
-        delay: env.gbp.retrySyncDelayMs,
-      }
-    );
 
     gbpAccount.syncDueAt = new Date(Date.now() + env.gbp.retrySyncDelayMs);
     await gbpAccount.save();
