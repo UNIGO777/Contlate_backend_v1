@@ -95,6 +95,12 @@ const env = {
     // allowlisted and quota-limited, so they are cached too.
     reviewsTtlHours: toInt(process.env.GBP_REVIEWS_TTL_HOURS, 6),
     reviewsMinRefreshMinutes: toInt(process.env.GBP_REVIEWS_MIN_REFRESH_MINUTES, 30),
+    // Google rate-limits a location fetch made right after the OAuth grant,
+    // which is why the first attempt used to fail and only a later retry
+    // succeeded. Wait before the first sync instead of burning an attempt.
+    initialSyncDelayMs: toInt(process.env.GBP_INITIAL_SYNC_DELAY_MS, 120_000),
+    // A manual retry happens minutes later, so it does not need the full wait.
+    retrySyncDelayMs: toInt(process.env.GBP_RETRY_SYNC_DELAY_MS, 5_000),
   },
 
   dataForSeo: {

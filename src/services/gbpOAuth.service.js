@@ -299,9 +299,15 @@ async function connectAndSaveTokens(userId, businessId, tokenData) {
       { businessId: businessId.toString(), userId: userId.toString() },
       {
         jobId: `gbp-sync-${businessId}`, // deduplicate: only one sync per business
-        delay: 2000, // 2-second delay before starting (avoid immediate rate limits)
+        // Google rate-limits a fetch issued immediately after the grant.
+        delay: env.gbp.initialSyncDelayMs,
       }
     );
+
+    await GbpAccount.updateOne(
+      { businessId },
+      { $set: { syncDueAt: new Date(Date.now() + env.gbp.initialSyncDelayMs) } }
+    ).catch(() => {});
   } catch (queueErr) {
     // If Redis/BullMQ is down, fall back to pending_locations so user can retry manually
     logger.warn("[gbp] failed to queue sync job, falling back to pending_locations", {
@@ -374,9 +380,12 @@ async function retrySync(businessId) {
       { businessId: businessId.toString(), userId: gbpAccount.userId.toString() },
       {
         jobId: `gbp-sync-${businessId}`,
-        delay: 2000,
+        delay: env.gbp.retrySyncDelayMs,
       }
     );
+
+    gbpAccount.syncDueAt = new Date(Date.now() + env.gbp.retrySyncDelayMs);
+    await gbpAccount.save();
   } catch (queueErr) {
     gbpAccount.status = "pending_locations";
     await gbpAccount.save();
@@ -435,7 +444,7 @@ async function disconnect(businessId) {
  */
 async function getStatus(businessId) {
   const gbpAccount = await GbpAccount.findOne({ businessId }).select(
-    "_id status gbpLocationName gbpAccountName connectedAt gbpLocationId pendingLocations"
+    "_id status gbpLocationName gbpAccountName connectedAt gbpLocationId pendingLocations syncDueAt"
   );
 
   if (!gbpAccount) {
@@ -448,10 +457,14 @@ async function getStatus(businessId) {
   // endless spinner.
   const SYNC_STALL_MS = 60 * 1000;
   let effectiveStatus = gbpAccount.status;
+  // The first sync is intentionally delayed to dodge Google's post-grant rate
+  // limit, so the stall clock only starts once that scheduled run is due.
+  const syncDue = gbpAccount.syncDueAt ? gbpAccount.syncDueAt.getTime() : 0;
+  const stallFrom = Math.max(gbpAccount.connectedAt ? gbpAccount.connectedAt.getTime() : 0, syncDue);
   if (
     effectiveStatus === "syncing" &&
-    gbpAccount.connectedAt &&
-    Date.now() - gbpAccount.connectedAt.getTime() > SYNC_STALL_MS
+    stallFrom &&
+    Date.now() - stallFrom > SYNC_STALL_MS
   ) {
     effectiveStatus = "pending_locations";
     // Also update the DB so it doesn't keep returning syncing
@@ -469,6 +482,12 @@ async function getStatus(businessId) {
     accountName: gbpAccount.gbpAccountName || "",
     locationSelected: !!gbpAccount.gbpLocationId,
     connectedAt: gbpAccount.connectedAt,
+    // When the queued fetch runs, and how long the client should still wait.
+    syncDueAt: gbpAccount.syncDueAt,
+    secondsUntilSync:
+      gbpAccount.syncDueAt && gbpAccount.syncDueAt.getTime() > Date.now()
+        ? Math.ceil((gbpAccount.syncDueAt.getTime() - Date.now()) / 1000)
+        : 0,
   };
 
   // Include pending locations if user needs to pick one

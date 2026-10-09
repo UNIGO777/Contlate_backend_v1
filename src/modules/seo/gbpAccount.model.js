@@ -70,6 +70,12 @@ const gbpAccountSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // When the queued location sync is due to run. Lets the client show a
+    // real countdown instead of an indeterminate spinner.
+    syncDueAt: {
+      type: Date,
+      default: null,
+    },
     status: {
       type: String,
       enum: ["connected", "expired", "revoked", "pending_locations", "syncing"],
