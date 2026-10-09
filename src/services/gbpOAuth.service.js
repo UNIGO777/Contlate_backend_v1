@@ -332,8 +332,13 @@ async function retrySync(businessId) {
     return { alreadyComplete: true, gbpAccount };
   }
 
-  // Already syncing
-  if (gbpAccount.status === "syncing") {
+  // Already syncing — but only believe it for a short window. The worker
+  // retries with exponential backoff (30s/60s/120s/240s), and getStatus flips
+  // a stalled "syncing" to pending_locations after 60s, so a press landing in
+  // that gap used to be a silent no-op that still answered 200.
+  const SYNC_STALL_MS = 60 * 1000;
+  const lastChange = gbpAccount.updatedAt ? gbpAccount.updatedAt.getTime() : 0;
+  if (gbpAccount.status === "syncing" && Date.now() - lastChange < SYNC_STALL_MS) {
     return { alreadySyncing: true, gbpAccount };
   }
 
@@ -345,13 +350,23 @@ async function retrySync(businessId) {
     const { getQueues } = require("../queues/queues");
     const queues = getQueues();
 
-    // Remove any stale job with the same ID before adding
+    // BullMQ de-duplicates on jobId: if a job with this id still exists in
+    // ANY state, `add` is silently ignored. The old guard only removed
+    // completed/failed jobs, so a job sitting in `delayed` between backoff
+    // attempts swallowed every retry press while we still returned 200.
+    // Remove it whatever the state, except `active` — that one is mid-run.
     const existingJob = await queues.gbpSync.getJob(`gbp-sync-${businessId}`);
     if (existingJob) {
       const state = await existingJob.getState();
-      if (state === "completed" || state === "failed") {
-        await existingJob.remove();
+      if (state === "active") {
+        // Genuinely running right now; let it finish rather than racing it.
+        return { alreadySyncing: true, gbpAccount };
       }
+      await existingJob.remove().catch(() => {});
+      logger.info("[gbp] removed stale sync job before retry", {
+        businessId: String(businessId),
+        previousState: state,
+      });
     }
 
     await queues.gbpSync.add(

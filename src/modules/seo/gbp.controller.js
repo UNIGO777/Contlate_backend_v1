@@ -94,6 +94,7 @@ const retryFetchLocations = asyncHandler(async (req, res) => {
       new ApiResponse(200, {
         connected: true,
         syncing: false,
+        queued: false,
         locationName: result.gbpAccount.gbpLocationName,
       }, "Google Business Profile is already connected.")
     );
@@ -104,6 +105,8 @@ const retryFetchLocations = asyncHandler(async (req, res) => {
       new ApiResponse(200, {
         connected: true,
         syncing: true,
+        // Nothing new was queued — a sync is genuinely mid-flight.
+        queued: false,
       }, "Sync is already in progress. Please wait...")
     );
   }
@@ -114,6 +117,7 @@ const retryFetchLocations = asyncHandler(async (req, res) => {
     new ApiResponse(200, {
       connected: true,
       syncing: true,
+      queued: true,
     }, "Retrying location fetch in the background...")
   );
 });
