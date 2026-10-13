@@ -311,8 +311,76 @@ const generateColorThemes = async (input = {}) => {
   return normalizeThemes(safeJsonParse(text));
 };
 
+const REVIEW_REPLY_SYSTEM_PROMPT = `You write short, warm replies that a small
+business owner posts publicly under a Google review.
+
+Rules:
+- Reply as the business owner, first person plural ("we").
+- 2 sentences, under 320 characters. Google truncates long replies.
+- Thank the reviewer by first name when one is given.
+- For a negative review: acknowledge the specific problem, apologise plainly,
+  and invite them to get in touch. Never argue, never make excuses.
+- No hashtags, no emoji, no marketing slogans, no invented facts about what
+  happened. Only use details present in the review.
+- Return the reply text only, with no quotes or preamble.`;
+
+/**
+ * Draft a public reply to a Google review. Returns plain text ready to post.
+ */
+const generateReviewReply = async ({ businessName, category, city, review }) => {
+  if (!isConfigured()) throw new Error("OpenAI is not configured (OPENAI_API_KEY missing).");
+
+  const stars = review?.starRating ? `${review.starRating} out of 5 stars` : "no rating";
+  const body = review?.comment?.trim()
+    ? review.comment.trim().slice(0, 1200)
+    : "(the reviewer left a rating with no written comment)";
+
+  const payload = {
+    model: env.openai.model,
+    messages: [
+      { role: "system", content: REVIEW_REPLY_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          `Business: ${businessName || "our business"}`,
+          category ? `Category: ${category}` : "",
+          city ? `City: ${city}` : "",
+          `Reviewer: ${review?.authorName || "a customer"}`,
+          `Rating: ${stars}`,
+          `Review: ${body}`,
+        ].filter(Boolean).join("\n"),
+      },
+    ],
+    temperature: 0.7,
+    max_tokens: 200,
+  };
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.openai.apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    const err = new Error(`OpenAI ${res.status}: ${errText.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+
+  const json = await res.json();
+  const text = json.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("OpenAI returned an empty reply.");
+  // Strip wrapping quotes the model sometimes adds despite the instruction.
+  return text.replace(/^["\u201c]|["\u201d]$/g, "").trim();
+};
+
 module.exports = {
   isConfigured,
+  generateReviewReply,
   generateBrandStory,
   generateBusinessProfileSuggestions,
   generateColorThemes,

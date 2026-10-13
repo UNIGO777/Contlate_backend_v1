@@ -162,4 +162,82 @@ async function getReviews(businessId, { force = false } = {}) {
   }
 }
 
-module.exports = { getReviews, buildReviewsPath, starToNumber, mapReview };
+/**
+ * Post (or update) the owner reply on a review.
+ *
+ * v4 uses PUT on the reply sub-resource, so this both creates and edits.
+ * The local cache is patched straight away — a refetch would be served from
+ * our own TTL and would not show the reply for hours.
+ */
+async function replyToReview(businessId, reviewId, comment) {
+  const text = String(comment || "").trim();
+  if (!text) {
+    throw new ApiError(400, "Reply text is required.", { code: ERROR_CODES.VALIDATION_FAILED });
+  }
+  // Google truncates beyond this, so reject rather than silently losing text.
+  if (text.length > 4096) {
+    throw new ApiError(400, "Reply is too long.", { code: ERROR_CODES.VALIDATION_FAILED });
+  }
+
+  const gbpAccount = await GbpAccount.findOne({ businessId });
+  if (!gbpAccount || gbpAccount.status !== "connected" || !gbpAccount.gbpLocationId) {
+    throw new ApiError(400, "Google Business Profile is not connected.", {
+      code: ERROR_CODES.GBP_NOT_CONNECTED,
+    });
+  }
+
+  const accessToken = await gbpOAuthService.getValidAccessToken(gbpAccount);
+  const base = buildReviewsPath(gbpAccount.gbpAccountId, gbpAccount.gbpLocationId);
+  const url = `${MB_V4_BASE}/${base}/${encodeURIComponent(reviewId)}/reply`;
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ comment: text }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    logger.error("[gbp] review reply failed", {
+      businessId: String(businessId),
+      reviewId,
+      status: res.status,
+      body: body.slice(0, 200),
+    });
+    if (res.status === 403) {
+      throw new ApiError(403, "Reviews access is not enabled for this app yet.", {
+        code: ERROR_CODES.GBP_NOT_CONNECTED,
+        details: { reason: "my_business_v4_not_enabled" },
+      });
+    }
+    throw new ApiError(502, "Could not post the reply to Google.", {
+      code: ERROR_CODES.GBP_NOT_CONNECTED,
+    });
+  }
+
+  const replied = await res.json().catch(() => ({}));
+  const updateTime = replied?.updateTime ? new Date(replied.updateTime) : new Date();
+
+  await GbpReviews.updateOne(
+    { businessId, "reviews.reviewId": reviewId },
+    {
+      $set: {
+        "reviews.$.replyComment": text,
+        "reviews.$.replyUpdateTime": updateTime,
+      },
+    }
+  );
+  // Keep the unanswered tally honest without a full refetch.
+  await GbpReviews.updateOne(
+    { businessId, unansweredCount: { $gt: 0 } },
+    { $inc: { unansweredCount: -1 } }
+  );
+
+  logger.info("[gbp] review reply posted", { businessId: String(businessId), reviewId });
+  return { reviewId, replyComment: text, replyUpdateTime: updateTime };
+}
+
+module.exports = { getReviews, replyToReview, buildReviewsPath, starToNumber, mapReview };

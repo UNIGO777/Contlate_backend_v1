@@ -294,6 +294,8 @@ const validateUpdateBusiness = (req) => {
         value.autopilot.enabled = Boolean(body.autopilot.enabled);
       if (body.autopilot.approvalRequired !== undefined)
         value.autopilot.approvalRequired = Boolean(body.autopilot.approvalRequired);
+      if (body.autopilot.autoReplyReviews !== undefined)
+        value.autopilot.autoReplyReviews = Boolean(body.autopilot.autoReplyReviews);
     }
   }
 

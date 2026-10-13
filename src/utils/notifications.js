@@ -9,6 +9,7 @@
  *   sendAppNotification(userId, 'POSTER_POSTED',    { dayNumber: 3, platform: 'Instagram' })
  *   sendAppNotification(userId, 'DECLINE_DEADLINE', { dayNumber: 3, hoursLeft: 2 })
  *   sendAppNotification(userId, 'QUEUE_POSITION',   { dayNumber: 3, position: 4 })
+ *   sendAppNotification(userId, 'REVIEW_REPLIED',   { authorName, starRating, replyText })
  *   sendAppNotification(userId, 'PLAN_GENERATED',   {})
  *   sendAppNotification(userId, 'RENEWAL_REMINDER', {})
  *   sendAppNotification(userId, 'GENERAL',          { title: 'Hello', body: 'Custom message' })
@@ -106,6 +107,11 @@ const TEMPLATES = {
     title: paused ? "Scheduled post paused" : "Scheduled post failed",
     body: reason || `Your scheduled post to ${accountName || platform || "your account"} failed after multiple attempts.`,
     emailTemplate: "publish_failed",
+  }),
+  REVIEW_REPLIED: ({ authorName, starRating, replyText }) => ({
+    notifType: "review_replied",
+    title: `New ${starRating ? `${starRating}★ ` : ""}review — replied ⭐`,
+    body: `${authorName || "A customer"} left a review and we posted a reply for you: "${String(replyText || "").slice(0, 90)}${String(replyText || "").length > 90 ? "…" : ""}"`,
   }),
   GENERAL: ({ title, body }) => ({
     notifType: "plan_day_ready",

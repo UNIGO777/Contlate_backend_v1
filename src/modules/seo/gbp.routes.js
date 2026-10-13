@@ -28,6 +28,12 @@ router.get("/insights", gbpController.getInsights);
 // GET /business/gbp/reviews — cached reviews for the connected location
 router.get("/reviews", gbpController.getReviews);
 
+// POST /business/gbp/reviews/:reviewId/ai-draft — AI-written reply, not posted
+router.post("/reviews/:reviewId/ai-draft", gbpController.draftReviewReply);
+
+// POST /business/gbp/reviews/:reviewId/reply — publish the reply to Google
+router.post("/reviews/:reviewId/reply", gbpController.replyToReview);
+
 // DELETE /business/gbp/disconnect — remove tokens, user can reconnect
 router.delete("/disconnect", gbpController.disconnect);
 

@@ -23,6 +23,7 @@ const notificationSchema = new mongoose.Schema(
         "permissions_revoked",
         "schedule_reminder",
         "schedule_failed",
+        "review_replied",
       ],
       required: true,
     },

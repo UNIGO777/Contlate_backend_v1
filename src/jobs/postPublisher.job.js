@@ -32,6 +32,16 @@ const releaseStaleLocks = async (now) => {
   );
 };
 
+/**
+ * Auto-posting master switch. Defaults to on so existing businesses keep
+ * publishing exactly as before.
+ */
+const isAutopilotEnabled = async (businessId) => {
+  const Business = require("../modules/business/business.model");
+  const b = await Business.findById(businessId).select("autopilot").lean();
+  return b?.autopilot?.enabled !== false;
+};
+
 // Atomically claim one due schedule by flipping pending -> processing.
 const claimNext = async (now) =>
   Schedule.findOneAndUpdate(
@@ -408,6 +418,22 @@ const runOnce = async () => {
   for (let i = 0; i < BATCH_SIZE; i += 1) {
     const schedule = await claimNext(new Date());
     if (!schedule) break;
+
+    // autopilot.enabled was stored and editable but nothing ever read it, so
+    // turning auto-posting off had no effect. Honour it here: put the
+    // schedule back as pending so it publishes if autopilot is switched on.
+    const autoOn = await isAutopilotEnabled(schedule.businessId);
+    if (!autoOn) {
+      await Schedule.updateOne(
+        { _id: schedule._id },
+        { $set: { status: SCHEDULE_STATUS.PENDING, lockedAt: null } }
+      );
+      logger.info("[postPublisher] skipped — autopilot off", {
+        businessId: String(schedule.businessId),
+        scheduleId: schedule._id.toString(),
+      });
+      continue;
+    }
 
     try {
       await processOne(schedule);

@@ -5,6 +5,8 @@ const { ERROR_CODES } = require("../../constants/errorCodes");
 const gbpOAuthService = require("../../services/gbpOAuth.service");
 const gbpPerformanceService = require("../../services/gbpPerformance.service");
 const gbpReviewsService = require("../../services/gbpReviews.service");
+const openaiService = require("../../services/openai.service");
+const GbpReviews = require("./gbpReviews.model");
 const aiSeoService = require("../ai-seo/aiSeo.service");
 const logger = require("../../core/logger");
 
@@ -247,10 +249,53 @@ const getReviews = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * POST /business/gbp/reviews/:reviewId/ai-draft
+ * Draft a reply with AI. Does not post anything — the owner reviews it first.
+ */
+const draftReviewReply = asyncHandler(async (req, res) => {
+  const { reviewId } = req.params;
+
+  const cached = await GbpReviews.findOne({ businessId: req.business._id }).lean();
+  const review = cached?.reviews?.find((r) => r.reviewId === reviewId);
+  if (!review) {
+    throw new ApiError(404, "Review not found. Refresh your reviews and try again.", {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+
+  try {
+    const reply = await openaiService.generateReviewReply({
+      businessName: req.business.businessName,
+      category: req.business.category,
+      city: req.business.address?.city,
+      review,
+    });
+    return res.status(200).json(new ApiResponse(200, { reviewId, reply }, "Draft reply generated."));
+  } catch (err) {
+    logger.error("[gbp] review reply draft failed", { reviewId, message: err.message });
+    throw new ApiError(502, "Could not draft a reply right now.", {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+});
+
+/**
+ * POST /business/gbp/reviews/:reviewId/reply
+ * Publish the owner reply to Google.
+ */
+const replyToReview = asyncHandler(async (req, res) => {
+  const { reviewId } = req.params;
+  const data = await gbpReviewsService.replyToReview(req.business._id, reviewId, req.body?.comment);
+  return res.status(200).json(new ApiResponse(200, data, "Reply posted."));
+});
+
 module.exports = {
   getConnectUrl,
   getInsights,
   getReviews,
+  draftReviewReply,
+  replyToReview,
   handleCallback,
   selectLocation,
   retryFetchLocations,

@@ -9,6 +9,7 @@ const postPublisherJob = require("./jobs/postPublisher.job");
 const seoRefreshJob = require("./jobs/seoRefresh.job");
 const tokenRefreshJob = require("./jobs/tokenRefresh.job");
 const accountHealthCheckJob = require("./jobs/accountHealthCheck.job");
+const reviewAutoReplyJob = require("./jobs/reviewAutoReply.job");
 
 /**
  * Probe Redis before starting queue workers.
@@ -51,6 +52,7 @@ const startServer = async () => {
     seoRefreshJob.start();
     tokenRefreshJob.start();
     accountHealthCheckJob.start();
+    reviewAutoReplyJob.start();
 
     // BullMQ queue workers — only start if Redis is reachable
     const redisOk = await probeRedis();

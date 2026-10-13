@@ -271,6 +271,7 @@ const sanitizeBusiness = (business) => {
   autopilot: {
     enabled:          business.autopilot?.enabled ?? true,
     approvalRequired: business.autopilot?.approvalRequired ?? false,
+    autoReplyReviews: business.autopilot?.autoReplyReviews ?? false,
   },
   google: business.google
     ? {
@@ -655,6 +656,7 @@ const updateBusiness = async (userId, payload) => {
     business.autopilot = {
       enabled:          payload.autopilot.enabled          ?? business.autopilot?.enabled          ?? true,
       approvalRequired: payload.autopilot.approvalRequired ?? business.autopilot?.approvalRequired ?? false,
+      autoReplyReviews: payload.autopilot.autoReplyReviews ?? business.autopilot?.autoReplyReviews ?? false,
     };
   }
   if (typeof payload.onboardingStep === "number") {

@@ -152,6 +152,12 @@ const businessSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      // Auto-reply to Google reviews. Off by default: replies are published
+      // publicly under the business name, so this is opt-in.
+      autoReplyReviews: {
+        type: Boolean,
+        default: false,
+      },
     },
     seo: {
       locationName: { type: String, trim: true, default: "" },
