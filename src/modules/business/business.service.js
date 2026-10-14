@@ -653,6 +653,22 @@ const updateBusiness = async (userId, payload) => {
     };
   }
   if (payload.autopilot) {
+    // Automation is a paid feature. Gate it here as well as in the UI —
+    // the client can be bypassed, a PATCH cannot.
+    const turningOn =
+      payload.autopilot.enabled === true || payload.autopilot.autoReplyReviews === true;
+    if (turningOn) {
+      const User = require("../user/user.model");
+      const { PLANS } = require("../../constants/plans");
+      const owner = await User.findById(business.userId).select("plan").lean();
+      const plan = owner?.plan || PLANS.BASIC;
+      if (plan === PLANS.BASIC) {
+        throw new ApiError(403, "Automation is available on paid plans. Upgrade to turn it on.", {
+          code: ERROR_CODES.SUBSCRIPTION_REQUIRED ?? ERROR_CODES.VALIDATION_FAILED,
+        });
+      }
+    }
+
     business.autopilot = {
       enabled:          payload.autopilot.enabled          ?? business.autopilot?.enabled          ?? true,
       approvalRequired: payload.autopilot.approvalRequired ?? business.autopilot?.approvalRequired ?? false,
