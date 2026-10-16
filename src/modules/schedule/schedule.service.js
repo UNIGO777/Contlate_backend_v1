@@ -114,11 +114,21 @@ const ensureSocialAccount = async (userId, socialAccountId) => {
   return account;
 };
 
-const create = async (userId, businessId, payload) => {
-  await usageService.assertUsageWithinLimit(userId, "scheduledPostsCount");
+// The plan limit counts posts, not schedule rows. One post sent to both
+// Facebook and Instagram writes a row per account, so charging per row would
+// make "2 posts a day" mean one post for anyone with two accounts connected.
+// Only the first row for a piece of content is charged.
+const isFirstScheduleFor = async (userId, contentId) =>
+  !(await Schedule.exists({ userId, contentId }));
 
+const create = async (userId, businessId, payload) => {
   const content = await ensureContent(userId, payload.contentId);
   const account = await ensureSocialAccount(userId, payload.socialAccountId);
+
+  const charge = await isFirstScheduleFor(userId, content._id);
+  if (charge) {
+    await usageService.assertUsageWithinLimit(userId, "scheduledPostsCount");
+  }
 
   if (String(content.businessId) !== String(businessId)) {
     throw new ApiError(403, "Content does not belong to the active business.", {
@@ -152,7 +162,9 @@ const create = async (userId, businessId, payload) => {
     status: SCHEDULE_STATUS.PENDING,
   });
 
-  await usageService.incrementUsage(userId, "scheduledPostsCount");
+  if (charge) {
+    await usageService.incrementUsage(userId, "scheduledPostsCount");
+  }
 
   return sanitize(schedule);
 };
@@ -167,6 +179,11 @@ const bulkCreate = async (userId, businessId, items) => {
       const item = items[i];
       const content = await ensureContent(userId, item.contentId);
       const account = await ensureSocialAccount(userId, item.socialAccountId);
+
+      const charge = await isFirstScheduleFor(userId, content._id);
+      if (charge) {
+        await usageService.assertUsageWithinLimit(userId, "scheduledPostsCount");
+      }
 
       if (String(content.businessId) !== String(businessId)) {
         results.push({ index: i, error: "Content does not belong to the active business." });
@@ -198,7 +215,9 @@ const bulkCreate = async (userId, businessId, items) => {
         status: SCHEDULE_STATUS.PENDING,
       });
 
-      await usageService.incrementUsage(userId, "scheduledPostsCount");
+      if (charge) {
+        await usageService.incrementUsage(userId, "scheduledPostsCount");
+      }
       results.push({ index: i, schedule: sanitize(schedule) });
     } catch (err) {
       results.push({ index: i, error: err.message || "Unknown error." });

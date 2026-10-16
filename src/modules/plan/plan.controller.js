@@ -157,6 +157,8 @@ const getActivePlan = asyncHandler(async (req, res) => {
   // Map each day to the frontend PlanDay shape
   const days = plan.days.map((d) => ({
     dayNumber: d.dayNumber,
+    // The client needs this to open the publish/schedule screen for a day.
+    contentId: d.contentId ? String(d.contentId) : null,
     title: d.title || d.topic || `Day ${d.dayNumber}`,
     description: d.description || null,
     status: d.planStatus || "concept",

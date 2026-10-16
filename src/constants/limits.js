@@ -5,7 +5,9 @@ const MB = 1024 * 1024;
 const PLAN_LIMITS = Object.freeze({
   [PLANS.BASIC]: {
     uploadsPerDay:        5,
-    scheduledPostsPerDay: 1,
+    // The free tier generates exactly two posters (intro + about-us),
+    // so a lower cap would make the second one unschedulable.
+    scheduledPostsPerDay: 2,
     aiPostersPerDay:      1,
     maxSocialAccounts:    1,
     maxContentItems:      20,

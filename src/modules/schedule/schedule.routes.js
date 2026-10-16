@@ -1,6 +1,5 @@
 const express = require("express");
 const checkBusinessMiddleware = require("../../middlewares/checkBusiness.middleware");
-const usageLimitMiddleware = require("../../middlewares/usageLimit.middleware");
 const validateMiddleware = require("../../middlewares/validate.middleware");
 const scheduleController = require("./schedule.controller");
 const {
@@ -14,7 +13,6 @@ router.use(checkBusinessMiddleware);
 
 router.post(
   "/",
-  usageLimitMiddleware("scheduledPostsCount"),
   validateMiddleware(validateCreateSchedulePayload),
   scheduleController.createSchedule
 );
