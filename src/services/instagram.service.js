@@ -219,6 +219,15 @@ const igError = (data, status) => {
   return err;
 };
 
+const igGet = async (path, searchParams) => {
+  const url = new URL(`${IG_GRAPH}${path}`);
+  Object.entries(searchParams).forEach(([k, v]) => url.searchParams.set(k, v));
+  const res = await fetch(url.toString());
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw igError(data, res.status);
+  return data;
+};
+
 const igFetch = async (path, searchParams) => {
   const url = new URL(`${IG_GRAPH}${path}`);
   const res = await fetch(url.toString(), {
@@ -229,6 +238,45 @@ const igFetch = async (path, searchParams) => {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw igError(data, res.status);
   return data;
+};
+
+// Creating a container only queues it — Instagram still has to fetch the
+// image from our server. Publishing before that finishes returns code 9007,
+// "Media ID is not available", which reads like a bad id but just means too
+// soon. Poll until the container is ready.
+const CONTAINER_POLL_MS = 2000;
+const CONTAINER_MAX_WAIT_MS = 60000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const waitForContainer = async (containerId, accessToken) => {
+  const deadline = Date.now() + CONTAINER_MAX_WAIT_MS;
+
+  while (Date.now() < deadline) {
+    const data = await igGet(`/${containerId}`, {
+      fields: "status_code,status",
+      access_token: accessToken,
+    });
+
+    if (data.status_code === "FINISHED") return;
+
+    if (data.status_code === "ERROR" || data.status_code === "EXPIRED") {
+      // Almost always an image Instagram could not fetch or accept, which no
+      // amount of retrying will fix.
+      const err = new Error(
+        data.status ||
+          `Instagram rejected the media (${data.status_code}). Check the image is publicly reachable, JPEG, and within size limits.`
+      );
+      err.failureType = "permanent";
+      throw err;
+    }
+
+    await sleep(CONTAINER_POLL_MS);
+  }
+
+  const err = new Error("Instagram did not finish processing the image in time.");
+  err.failureType = "retryable";
+  throw err;
 };
 
 // An account connected through Instagram Login, as opposed to one reached via
@@ -257,6 +305,8 @@ const publish = async ({ account, content }) => {
     access_token: accessToken,
   });
   if (!container.id) throw new Error("Failed to create Instagram media container.");
+
+  await waitForContainer(container.id, accessToken);
 
   const published = await igFetch(`/${account.accountId}/media_publish`, {
     creation_id: container.id,
