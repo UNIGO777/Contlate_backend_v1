@@ -1,4 +1,5 @@
 const ApiError = require("../../core/ApiError");
+const logger = require("../../core/logger");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
 const { CONTENT_STATUS } = require("../../constants/contentStatus");
@@ -8,6 +9,8 @@ const { getLimits } = require("../../constants/publishingLimits");
 const Content = require("../content/content.model");
 const SocialAccount = require("../social/social.model");
 const Schedule = require("./schedule.model");
+const ContentPlan = require("../poster/contentPlan.model");
+const env = require("../../config/env");
 const usageService = require("../usage/usage.service");
 
 const sanitize = (s) => ({
@@ -69,6 +72,9 @@ const assertPublishingAllowed = async (socialAccountId, platform, scheduledAt, e
   }
 
   // ── 2. Minimum interval ───────────────────────────────────────────────────
+  // Relaxed for testing so several posts can share a date; the daily ceiling
+  // above is Meta's own and stays enforced either way.
+  if (env.schedule.relaxLimits) return;
   const gapMs = limits.minIntervalMinutes * 60 * 1000;
   const windowStart = new Date(scheduledAt.getTime() - gapMs);
   const windowEnd   = new Date(scheduledAt.getTime() + gapMs);
@@ -114,6 +120,23 @@ const ensureSocialAccount = async (userId, socialAccountId) => {
   return account;
 };
 
+// The content plan day carries the time the app shows in the detail sheet.
+// Scheduling by hand only wrote a Schedule row, so the sheet kept offering
+// to schedule a post that was already scheduled. Mirror the time onto the
+// day whenever it changes.
+const syncPlanDayScheduledAt = async (contentId, scheduledAt) => {
+  try {
+    await ContentPlan.updateOne(
+      { "days.contentId": contentId },
+      { $set: { "days.$.scheduledPostAt": scheduledAt } }
+    );
+  } catch (err) {
+    // The row is the source of truth for publishing; a stale display time
+    // must never fail the schedule itself.
+    logger.warn("[schedule] plan day sync failed", { message: err.message });
+  }
+};
+
 // The plan limit counts posts, not schedule rows. One post sent to both
 // Facebook and Instagram writes a row per account, so charging per row would
 // make "2 posts a day" mean one post for anyone with two accounts connected.
@@ -126,7 +149,7 @@ const create = async (userId, businessId, payload) => {
   const account = await ensureSocialAccount(userId, payload.socialAccountId);
 
   const charge = await isFirstScheduleFor(userId, content._id);
-  if (charge) {
+  if (charge && !env.schedule.relaxLimits) {
     await usageService.assertUsageWithinLimit(userId, "scheduledPostsCount");
   }
 
@@ -166,6 +189,8 @@ const create = async (userId, businessId, payload) => {
     await usageService.incrementUsage(userId, "scheduledPostsCount");
   }
 
+  await syncPlanDayScheduledAt(content._id, userPreferredTime);
+
   return sanitize(schedule);
 };
 
@@ -181,7 +206,7 @@ const bulkCreate = async (userId, businessId, items) => {
       const account = await ensureSocialAccount(userId, item.socialAccountId);
 
       const charge = await isFirstScheduleFor(userId, content._id);
-      if (charge) {
+      if (charge && !env.schedule.relaxLimits) {
         await usageService.assertUsageWithinLimit(userId, "scheduledPostsCount");
       }
 
@@ -218,6 +243,7 @@ const bulkCreate = async (userId, businessId, items) => {
       if (charge) {
         await usageService.incrementUsage(userId, "scheduledPostsCount");
       }
+      await syncPlanDayScheduledAt(content._id, userPreferredTime);
       results.push({ index: i, schedule: sanitize(schedule) });
     } catch (err) {
       results.push({ index: i, error: err.message || "Unknown error." });
@@ -282,6 +308,9 @@ const update = async (userId, scheduleId, patch) => {
   if (patch.timezone) s.timezone = patch.timezone;
 
   await s.save();
+  if (patch.scheduledAt) {
+    await syncPlanDayScheduledAt(s.contentId, s.userPreferredTime);
+  }
   return sanitize(s);
 };
 
@@ -302,6 +331,15 @@ const cancel = async (userId, scheduleId) => {
   }
   s.status = SCHEDULE_STATUS.CANCELLED;
   await s.save();
+
+  // Other accounts may still be posting this content, so only clear the
+  // displayed time once nothing is left pending for it.
+  const stillLive = await Schedule.exists({
+    contentId: s.contentId,
+    status: { $nin: [SCHEDULE_STATUS.CANCELLED, SCHEDULE_STATUS.FAILED] },
+  });
+  if (!stillLive) await syncPlanDayScheduledAt(s.contentId, null);
+
   return sanitize(s);
 };
 

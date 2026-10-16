@@ -155,6 +155,9 @@ const autoSchedulePosters = async (now) => {
       if (!accounts.length) continue;
 
       const business = await Business.findById(plan.businessId).lean();
+      // Auto-posting turned off means the plan should not queue itself at
+      // all, rather than queueing rows the publisher then has to refuse.
+      if (business?.autopilot?.enabled === false) continue;
       const tz = business?.timezone || "UTC";
 
       for (const account of accounts) {
@@ -166,6 +169,7 @@ const autoSchedulePosters = async (now) => {
           scheduledAt: new Date(day.scheduledPostAt),
           timezone: tz,
           status: "pending",
+          source: "autopilot",
         });
         scheduled++;
       }

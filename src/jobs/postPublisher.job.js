@@ -43,12 +43,18 @@ const isAutopilotEnabled = async (businessId) => {
 };
 
 // Atomically claim one due schedule by flipping pending -> processing.
-const claimNext = async (now) =>
-  Schedule.findOneAndUpdate(
-    { status: SCHEDULE_STATUS.PENDING, scheduledAt: { $lte: now } },
+const claimNext = async (now, excludeIds = []) => {
+  const q = { status: SCHEDULE_STATUS.PENDING, scheduledAt: { $lte: now } };
+  // Rows deferred earlier in this tick are released back to pending and are
+  // still due, so without this they would be re-claimed immediately and the
+  // batch would spin on them instead of reaching anyone else's posts.
+  if (excludeIds.length) q._id = { $nin: excludeIds };
+  return Schedule.findOneAndUpdate(
+    q,
     { $set: { status: SCHEDULE_STATUS.PROCESSING, lockedAt: now } },
     { sort: { scheduledAt: 1 }, returnDocument: 'after' }
   );
+};
 
 const computeBackoffMs = (attempts) =>
   Math.min(60 * 60 * 1000, 30 * 1000 * 2 ** Math.max(0, attempts - 1));
@@ -415,15 +421,19 @@ const runOnce = async () => {
   let processed = 0;
   let failed = 0;
 
+  const deferred = [];
+
   for (let i = 0; i < BATCH_SIZE; i += 1) {
-    const schedule = await claimNext(new Date());
+    const schedule = await claimNext(new Date(), deferred);
     if (!schedule) break;
 
-    // autopilot.enabled was stored and editable but nothing ever read it, so
-    // turning auto-posting off had no effect. Honour it here: put the
-    // schedule back as pending so it publishes if autopilot is switched on.
-    const autoOn = await isAutopilotEnabled(schedule.businessId);
+    // The autopilot switch governs the plan posting by itself. A post the
+    // user scheduled by hand is an explicit instruction and goes out either
+    // way, so only autopilot's own rows are held back here.
+    const autoOn =
+      schedule.source !== "autopilot" || (await isAutopilotEnabled(schedule.businessId));
     if (!autoOn) {
+      deferred.push(schedule._id);
       await Schedule.updateOne(
         { _id: schedule._id },
         { $set: { status: SCHEDULE_STATUS.PENDING, lockedAt: null } }

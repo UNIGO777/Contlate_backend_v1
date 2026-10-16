@@ -294,6 +294,26 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
     return `${env.storagePublicBaseUrl}/${pathPart}`;
   };
 
+  // The welcome posters live on the business, not in a content plan, so the
+  // time they go live has to come from the schedule rows themselves —
+  // otherwise the app has no way to know they were ever scheduled.
+  const Schedule = require("../schedule/schedule.model");
+  const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
+
+  const pendingScheduleFor = async (contentId) => {
+    if (!contentId) return null;
+    const row = await Schedule.findOne({
+      contentId,
+      status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PROCESSING] },
+    })
+      .sort({ scheduledAt: 1 })
+      .select("userPreferredTime scheduledAt")
+      .lean();
+    if (!row) return null;
+    // Show the time the user picked, not the staggered execution time.
+    return row.userPreferredTime || row.scheduledAt || null;
+  };
+
   let introData = { imageUrl: null, caption: null };
   if (wp.introContentId) {
     const content = await Content.findById(wp.introContentId).select("imageUrl caption").lean();
@@ -312,6 +332,11 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
     }
   }
 
+  const [introPostAt, aboutUsPostAt] = await Promise.all([
+    pendingScheduleFor(wp.introContentId),
+    pendingScheduleFor(wp.aboutUsContentId),
+  ]);
+
   return res.json(
     new ApiResponse(200, {
       introDone: wp.introDone || false,
@@ -322,7 +347,11 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
       introCaption: introData.caption,
       aboutUsImageUrl: aboutUsData.imageUrl,
       aboutUsCaption: aboutUsData.caption,
+      // When generation was queued — not when the post goes live.
       aboutUsScheduledAt: wp.aboutUsScheduledAt || null,
+      // When the post actually goes live, once the user has scheduled it.
+      introPostAt: introPostAt ? introPostAt.toISOString() : null,
+      aboutUsPostAt: aboutUsPostAt ? aboutUsPostAt.toISOString() : null,
     })
   );
 });

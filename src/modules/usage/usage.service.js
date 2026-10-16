@@ -94,10 +94,26 @@ const checkLimit = async (userId, field) => {
   };
 };
 
+// "Daily limit reached for scheduledPostsCount" is the field name, not an
+// explanation. Say what the allowance actually is, since that is the one
+// thing the user needs to know to decide what to do next.
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const LIMIT_MESSAGE = {
+  scheduledPostsCount: (n) =>
+    `Your plan lets you schedule ${plural(n, "post")} a day. Upgrade to schedule more.`,
+  aiPostersCount: (n) =>
+    `Your plan includes ${plural(n, "AI poster")} a day. Upgrade to create more.`,
+  uploadsCount: (n) =>
+    `Your plan allows ${plural(n, "upload")} a day. Upgrade to upload more.`,
+};
+
 const assertUsageWithinLimit = async (userId, field) => {
   const res = await checkLimit(userId, field);
   if (res.limit !== null && res.used >= res.limit) {
-    throw new ApiError(403, `Daily limit reached for ${field}.`, {
+    const message =
+      LIMIT_MESSAGE[field]?.(res.limit) ?? `Daily limit reached for ${field}.`;
+    throw new ApiError(403, message, {
       code: ERROR_CODES.PLAN_LIMIT_REACHED,
       details: { field, used: res.used, limit: res.limit },
     });

@@ -103,6 +103,13 @@ const env = {
     retrySyncDelayMs: toInt(process.env.GBP_RETRY_SYNC_DELAY_MS, 5_000),
   },
 
+  schedule: {
+    // Testing escape hatch. Lifts the per-plan daily cap and the per-account
+    // minimum gap between posts, so several posts can be put on one date.
+    // Meta's own 25/day ceiling still applies and is still enforced.
+    relaxLimits: toBool(process.env.SCHEDULE_RELAX_LIMITS, false),
+  },
+
   dataForSeo: {
     login: process.env.DATAFORSEO_LOGIN || "",
     password: process.env.DATAFORSEO_PASSWORD || "",

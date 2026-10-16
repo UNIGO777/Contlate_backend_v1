@@ -79,6 +79,15 @@ const scheduleSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Who put this row here. The autopilot master switch must silence the
+    // plan's own auto-scheduled posts without also silencing a post the user
+    // scheduled by hand — those are an explicit instruction, not automation.
+    source: {
+      type: String,
+      enum: ["manual", "autopilot"],
+      default: "manual",
+      index: true,
+    },
   },
   {
     timestamps: true,
