@@ -22,6 +22,10 @@ const ERROR_CODES = Object.freeze({
   BUSINESS_NOT_FOUND: "BUSINESS_NOT_FOUND",
   BUSINESS_ALREADY_EXISTS: "BUSINESS_ALREADY_EXISTS",
 
+  // A scheduling clash is not bad input — the app needs to tell these apart
+  // so it can show the real reason instead of "check your input".
+  SCHEDULE_CONFLICT: "SCHEDULE_CONFLICT",
+
   PLAN_LIMIT_REACHED: "PLAN_LIMIT_REACHED",
   PLAN_UPGRADE_REQUIRED: "PLAN_UPGRADE_REQUIRED",
 

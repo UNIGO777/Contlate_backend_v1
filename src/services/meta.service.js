@@ -26,6 +26,25 @@ const ALL_SCOPES = [...CONNECT_SCOPES, ...PUBLISH_SCOPES];
 // Backward-compat alias — existing code references metaService.SCOPES
 const SCOPES = ALL_SCOPES;
 
+// Instagram publishing exists as two Meta products that grant the same two
+// permissions under different names: "Instagram API with Instagram Login"
+// grants instagram_business_basic / instagram_business_content_publish, while
+// "Instagram API with Facebook Login" grants the unprefixed instagram_basic /
+// instagram_content_publish. PUBLISH_SCOPES above lists the Facebook-Login
+// names, so an account connected through Instagram Login was reported as
+// missing permissions it had in fact granted, and every post it made was
+// paused before it was even attempted.
+const IG_SCOPE_ALIASES = {
+  instagram_basic: ["instagram_basic", "instagram_business_basic"],
+  instagram_content_publish: [
+    "instagram_content_publish",
+    "instagram_business_content_publish",
+  ],
+};
+
+const hasIgScope = (scopes, name) =>
+  (IG_SCOPE_ALIASES[name] || [name]).some((alias) => scopes.includes(alias));
+
 const ensureConfigured = () => {
   if (!env.meta.appId || !env.meta.appSecret) {
     throw new ApiError(501, "Meta OAuth is not configured on this server.");
@@ -401,8 +420,10 @@ const canAccountPublish = (account) => {
 
   if (account.platform === "instagram") {
     const missing = [];
-    if (!scopes.includes("instagram_basic")) missing.push("instagram_basic");
-    if (!scopes.includes("instagram_content_publish")) missing.push("instagram_content_publish");
+    if (!hasIgScope(scopes, "instagram_basic")) missing.push("instagram_basic");
+    if (!hasIgScope(scopes, "instagram_content_publish")) {
+      missing.push("instagram_content_publish");
+    }
     if (missing.length > 0) {
       return { allowed: false, reason: `Missing permissions: ${missing.join(", ")}` };
     }
@@ -813,6 +834,7 @@ module.exports = {
   listManagedPages,
   publish,
   canAccountPublish,
+  hasIgScope,
   decryptToken,
   graphFetch,
   subscribePageToWebhooks,

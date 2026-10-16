@@ -66,8 +66,9 @@ const assertPublishingAllowed = async (socialAccountId, platform, scheduledAt, e
 
   const dailyCount = await Schedule.countDocuments(dailyQuery);
   if (dailyCount >= limits.maxPerDay) {
-    throw new ApiError(429, `Daily posting limit (${limits.maxPerDay} posts/day) reached for this account.`, {
-      code: ERROR_CODES.VALIDATION_FAILED,
+    throw new ApiError(429, `This account has reached its limit of ${limits.maxPerDay} posts for that day.`, {
+      code: ERROR_CODES.SCHEDULE_CONFLICT,
+      details: { maxPerDay: limits.maxPerDay },
     });
   }
 
@@ -86,11 +87,24 @@ const assertPublishingAllowed = async (socialAccountId, platform, scheduledAt, e
   };
   if (excludeScheduleId) intervalQuery._id = { $ne: excludeScheduleId };
 
-  const tooClose = await Schedule.findOne(intervalQuery).lean();
+  const tooClose = await Schedule.findOne(intervalQuery).sort({ scheduledAt: 1 }).lean();
   if (tooClose) {
-    throw new ApiError(400, `Posts to the same account must be at least ${limits.minIntervalMinutes} minutes apart.`, {
-      code: ERROR_CODES.VALIDATION_FAILED,
-    });
+    // The clash is checked against the staggered execution time, which is not
+    // the time the user picked, so naming the gap alone left no way to work
+    // out what went wrong. Hand back the conflicting slot too.
+    const clashAt = tooClose.userPreferredTime || tooClose.scheduledAt;
+    throw new ApiError(
+      400,
+      `This account already has a post scheduled within ${limits.minIntervalMinutes} minutes of that time. Pick a time further away, or cancel the other post.`,
+      {
+        code: ERROR_CODES.SCHEDULE_CONFLICT,
+        details: {
+          minIntervalMinutes: limits.minIntervalMinutes,
+          conflictScheduleId: tooClose._id.toString(),
+          conflictAt: new Date(clashAt).toISOString(),
+        },
+      }
+    );
   }
 };
 

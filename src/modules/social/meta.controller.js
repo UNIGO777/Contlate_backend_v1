@@ -410,8 +410,8 @@ const checkPermissions = asyncHandler(async (req, res) => {
 
   const canPublishFacebook = granted.includes("pages_manage_posts");
   const canPublishInstagram =
-    granted.includes("instagram_basic") &&
-    granted.includes("instagram_content_publish");
+    metaService.hasIgScope(granted, "instagram_basic") &&
+    metaService.hasIgScope(granted, "instagram_content_publish");
 
   const allGranted = missing.length === 0 && declined.length === 0;
 
