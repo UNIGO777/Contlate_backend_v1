@@ -32,7 +32,18 @@ const normalizeSocialAccountPayload = (payload = {}) => {
 const publishToSocial = async ({ account, content }) => {
   const platform = account.platform?.toLowerCase();
 
-  // ── Meta (Facebook / Instagram) ─────────────────────────────────────────
+  // ── Instagram connected through Instagram Login ─────────────────────────
+  // Its token only works against graph.instagram.com, so it cannot go down
+  // the Meta path below even though the platform is the same.
+  if (platform === "instagram") {
+    const instagramService = require("./instagram.service");
+    if (instagramService.isInstagramLoginAccount(account)) {
+      const result = await instagramService.publish({ account, content });
+      return { ...result, platform };
+    }
+  }
+
+  // ── Meta (Facebook / Instagram via a linked Page) ────────────────────────
   if (platform === "facebook" || platform === "instagram") {
     const metaConfigured = Boolean(env.meta.appId && env.meta.appSecret);
     if (metaConfigured) {

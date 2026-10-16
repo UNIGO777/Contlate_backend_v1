@@ -193,8 +193,83 @@ const getProfile = async (accessToken) => {
   };
 };
 
+// ── Publishing ──────────────────────────────────────────────────────────────
+// Instagram Login issues tokens for graph.instagram.com. They are rejected by
+// graph.facebook.com with code 190, which reads as "token expired" even on a
+// token minted seconds earlier — so these accounts must publish through here
+// rather than through meta.service.
+const IG_GRAPH = "https://graph.instagram.com/v22.0";
+
+// Mirrors meta.service's error shape so postPublisher's classifyFailure can
+// branch on it without knowing which service produced the error.
+const igError = (data, status) => {
+  const code = data?.error?.code;
+  const message =
+    data?.error?.message || `Instagram API request failed (HTTP ${status}).`;
+  const err = new Error(message);
+  err.metaCode = code;
+  err.statusCode = status;
+  err.isRateLimit = code === 4 || code === 17 || code === 341 || status === 429;
+  err.isAuthError = code === 190;
+  if (err.isRateLimit || status >= 500) err.failureType = "retryable";
+  else if (err.isAuthError || code === 200 || code === 10) err.failureType = "recoverable";
+  else if (code === 368 || code === 2207051) err.failureType = "permanent";
+  else if (code === 100) err.failureType = "permanent";
+  else err.failureType = "retryable";
+  return err;
+};
+
+const igFetch = async (path, searchParams) => {
+  const url = new URL(`${IG_GRAPH}${path}`);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(searchParams).toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw igError(data, res.status);
+  return data;
+};
+
+// An account connected through Instagram Login, as opposed to one reached via
+// a linked Facebook Page. The two grant different scope names for the same
+// permissions, which is the only thing that distinguishes them on the record.
+const isInstagramLoginAccount = (account) =>
+  (account?.grantedScopes || []).some((x) => x.startsWith("instagram_business_"));
+
+const publish = async ({ account, content }) => {
+  if (!account.accessToken) {
+    throw new Error("Instagram account has no access token. Reconnect required.");
+  }
+  if (!account.accountId) {
+    throw new Error("Instagram account is missing its user id. Reconnect required.");
+  }
+  if (!content.imageUrl) {
+    throw new Error("Instagram requires an image to publish.");
+  }
+
+  const accessToken = require("./meta.service").decryptToken(account.accessToken);
+
+  // Two-step: build a media container, then publish it.
+  const container = await igFetch(`/${account.accountId}/media`, {
+    image_url: content.imageUrl,
+    caption: content.caption || "",
+    access_token: accessToken,
+  });
+  if (!container.id) throw new Error("Failed to create Instagram media container.");
+
+  const published = await igFetch(`/${account.accountId}/media_publish`, {
+    creation_id: container.id,
+    access_token: accessToken,
+  });
+
+  return { externalPostId: published.id };
+};
+
 module.exports = {
   SCOPES,
+  publish,
+  isInstagramLoginAccount,
   ensureConfigured,
   buildState,
   verifyState,

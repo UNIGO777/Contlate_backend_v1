@@ -4,6 +4,7 @@ const { SOCIAL_ACCOUNT_STATUS } = require("../constants/socialAccountStatus");
 const SocialAccount = require("../modules/social/social.model");
 const User = require("../modules/user/user.model");
 const metaService = require("../services/meta.service");
+const instagramService = require("../services/instagram.service");
 const { encrypt, decrypt } = require("../core/tokenEncryption");
 const { sendAppNotification } = require("../utils/notifications");
 const JobLog = require("./jobLog.model");
@@ -43,6 +44,52 @@ const findExpiringAccounts = async (now) => {
   })
     .limit(BATCH_SIZE)
     .lean();
+};
+
+/**
+ * Refresh a token issued by Instagram Login.
+ *
+ * These live on graph.instagram.com and are rejected by the Facebook
+ * fb_exchange_token endpoint, so sending them through refreshMetaToken would
+ * fail every time and eventually mark a perfectly good account as expired.
+ * There is no userAccessToken or page token here — the one token in
+ * accessToken is both.
+ *
+ * Meta requires the token to be at least 24 hours old; that always holds here
+ * because this job only looks at tokens nearing expiry.
+ */
+const refreshInstagramLoginToken = async (account) => {
+  const currentToken = safeDecrypt(account.accessToken);
+  if (!currentToken) throw new Error("Token decryption returned empty string.");
+
+  const refreshed = await instagramService.refreshLongLivedToken(currentToken);
+
+  const tokenExpiresAt = refreshed.expiresIn
+    ? new Date(Date.now() + refreshed.expiresIn * 1000)
+    : null;
+
+  const currentVersion = account.tokenVersion || 0;
+  const result = await SocialAccount.findOneAndUpdate(
+    { _id: account._id, tokenVersion: currentVersion },
+    {
+      $set: {
+        accessToken: encrypt(refreshed.accessToken),
+        tokenExpiresAt,
+        lastTokenRefreshedAt: new Date(),
+        healthStatus: "healthy",
+      },
+      $inc: { tokenVersion: 1 },
+    }
+  );
+
+  if (!result) {
+    logger.info("[tokenRefresh] skipped (token already refreshed by another process)", {
+      accountId: account._id.toString(),
+    });
+    return { tokenExpiresAt, skipped: true };
+  }
+
+  return { tokenExpiresAt };
 };
 
 /**
@@ -206,7 +253,9 @@ const runOnce = async () => {
 
   for (const account of accounts) {
     try {
-      const { tokenExpiresAt, skipped } = await refreshMetaToken(account);
+      const { tokenExpiresAt, skipped } = instagramService.isInstagramLoginAccount(account)
+        ? await refreshInstagramLoginToken(account)
+        : await refreshMetaToken(account);
       refreshed++;
       logger.info("[tokenRefresh] refreshed", {
         accountId: account._id.toString(),
