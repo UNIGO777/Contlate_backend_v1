@@ -841,6 +841,13 @@ const exchangeInstagramOAuth = asyncHandler(async (req, res) => {
     { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
   );
 
+  // Every Meta/Facebook-Login reconnect path does this, but Instagram Login
+  // did not — so a reconnect here left schedules that had paused on an
+  // expired token paused for good, with nothing else to ever release them.
+  metaService.invalidateStateCache(req.user.id);
+  const { resumePausedSchedules } = require("../../jobs/postPublisher.job");
+  resumePausedSchedules(account._id).catch(() => {});
+
   return res.status(200).json(
     new ApiResponse(
       200,

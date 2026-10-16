@@ -19,7 +19,9 @@ const sanitize = (s) => ({
   businessId: s.businessId.toString(),
   contentId: s.contentId.toString(),
   socialAccountId: s.socialAccountId.toString(),
-  // Display the user's chosen time in the UI (not the staggered execution time)
+  // Kept for the record, but the UI shows scheduledAt — the staggered time is
+  // when the post actually goes out, and showing the picked time instead made
+  // posts look late by the offset.
   userPreferredTime: s.userPreferredTime || s.scheduledAt,
   scheduledAt: s.scheduledAt,
   staggerOffsetMinutes: s.staggerOffsetMinutes ?? 0,
@@ -92,7 +94,7 @@ const assertPublishingAllowed = async (socialAccountId, platform, scheduledAt, e
     // The clash is checked against the staggered execution time, which is not
     // the time the user picked, so naming the gap alone left no way to work
     // out what went wrong. Hand back the conflicting slot too.
-    const clashAt = tooClose.userPreferredTime || tooClose.scheduledAt;
+    const clashAt = tooClose.scheduledAt;
     throw new ApiError(
       400,
       `This account already has a post scheduled within ${limits.minIntervalMinutes} minutes of that time. Pick a time further away, or cancel the other post.`,
@@ -135,6 +137,8 @@ const ensureSocialAccount = async (userId, socialAccountId) => {
 };
 
 // The content plan day carries the time the app shows in the detail sheet.
+// It stores the staggered execution time, which is when the post really goes
+// out — not the time the user picked.
 // Scheduling by hand only wrote a Schedule row, so the sheet kept offering
 // to schedule a post that was already scheduled. Mirror the time onto the
 // day whenever it changes.
@@ -203,7 +207,7 @@ const create = async (userId, businessId, payload) => {
     await usageService.incrementUsage(userId, "scheduledPostsCount");
   }
 
-  await syncPlanDayScheduledAt(content._id, userPreferredTime);
+  await syncPlanDayScheduledAt(content._id, executionTime);
 
   return sanitize(schedule);
 };
@@ -257,7 +261,7 @@ const bulkCreate = async (userId, businessId, items) => {
       if (charge) {
         await usageService.incrementUsage(userId, "scheduledPostsCount");
       }
-      await syncPlanDayScheduledAt(content._id, userPreferredTime);
+      await syncPlanDayScheduledAt(content._id, executionTime);
       results.push({ index: i, schedule: sanitize(schedule) });
     } catch (err) {
       results.push({ index: i, error: err.message || "Unknown error." });
@@ -323,7 +327,7 @@ const update = async (userId, scheduleId, patch) => {
 
   await s.save();
   if (patch.scheduledAt) {
-    await syncPlanDayScheduledAt(s.contentId, s.userPreferredTime);
+    await syncPlanDayScheduledAt(s.contentId, s.scheduledAt);
   }
   return sanitize(s);
 };

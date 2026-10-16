@@ -310,8 +310,8 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
       .select("userPreferredTime scheduledAt")
       .lean();
     if (!row) return null;
-    // Show the time the user picked, not the staggered execution time.
-    return row.userPreferredTime || row.scheduledAt || null;
+    // The staggered execution time — when the post actually goes out.
+    return row.scheduledAt || row.userPreferredTime || null;
   };
 
   let introData = { imageUrl: null, caption: null };
