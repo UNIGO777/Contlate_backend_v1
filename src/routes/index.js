@@ -10,6 +10,7 @@ const socialRoutes = require("../modules/social/social.routes");
 const subscriptionRoutes = require("../modules/subscription/subscription.routes");
 const uploadRoutes = require("../modules/upload/upload.routes");
 const usageRoutes = require("../modules/usage/usage.routes");
+const supportRoutes = require("../modules/support/support.routes");
 const scheduleRoutes = require("../modules/schedule/schedule.routes");
 const dashboardRoutes = require("../modules/dashboard/dashboard.routes");
 const posterRoutes = require("../modules/poster/poster.routes");
@@ -101,5 +102,6 @@ router.use("/admin", adminRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/plan", planRoutes);
 router.use("/publish", publishRoutes);
+router.use("/support", supportRoutes);
 
 module.exports = router;

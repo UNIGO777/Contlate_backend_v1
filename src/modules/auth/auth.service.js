@@ -30,6 +30,16 @@ const sanitizeUser = (user) => ({
   role: user.role,
   plan: user.plan,
   isEmailVerified: user.isEmailVerified,
+  // Defaults spelled out so a user saved before this field existed still
+  // reads as "everything on" rather than as a screenful of off switches.
+  notificationPrefs: {
+    push: user.notificationPrefs?.push ?? true,
+    email: user.notificationPrefs?.email ?? true,
+    posts: user.notificationPrefs?.posts ?? true,
+    reviews: user.notificationPrefs?.reviews ?? true,
+    accounts: user.notificationPrefs?.accounts ?? true,
+    billing: user.notificationPrefs?.billing ?? true,
+  },
   trialStartAt: user.trialStartAt,
   trialEndsAt: user.trialEndsAt,
   createdAt: user.createdAt,

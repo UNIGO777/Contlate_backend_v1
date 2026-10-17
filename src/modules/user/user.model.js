@@ -28,6 +28,17 @@ const userSchema = new mongoose.Schema(
     metaId: { type: String, default: null, sparse: true, index: true },
     phone: { type: String, trim: true, default: null },
     avatarUrl: { type: String, trim: true, default: null },
+
+    // What the user wants to hear about. Everything defaults to on so that
+    // existing accounts keep the behaviour they already had.
+    notificationPrefs: {
+      push:     { type: Boolean, default: true },
+      email:    { type: Boolean, default: true },
+      posts:    { type: Boolean, default: true },
+      reviews:  { type: Boolean, default: true },
+      accounts: { type: Boolean, default: true },
+      billing:  { type: Boolean, default: true },
+    },
     role: {
       type: String,
       enum: Object.values(ROLES),

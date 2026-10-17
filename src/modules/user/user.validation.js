@@ -5,8 +5,11 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const finalize = (details, value) =>
   details.length ? { error: "Validation failed.", details } : { value };
 
+// Anything outside this list is ignored rather than written straight through.
+const NOTIFICATION_PREF_KEYS = ["push", "email", "posts", "reviews", "accounts", "billing"];
+
 const validateUpdateProfile = (req) => {
-  const { name, phone, avatarUrl } = req.body || {};
+  const { name, phone, avatarUrl, notificationPrefs } = req.body || {};
   const details = [];
   const value = {};
 
@@ -21,6 +24,23 @@ const validateUpdateProfile = (req) => {
   if (avatarUrl !== undefined) {
     if (avatarUrl !== null && typeof avatarUrl !== "string") details.push("avatarUrl must be a string.");
     else value.avatarUrl = avatarUrl === null ? null : avatarUrl.trim();
+  }
+
+  if (notificationPrefs !== undefined) {
+    if (typeof notificationPrefs !== "object" || notificationPrefs === null) {
+      details.push("notificationPrefs must be an object.");
+    } else {
+      value.notificationPrefs = {};
+      for (const key of NOTIFICATION_PREF_KEYS) {
+        if (notificationPrefs[key] !== undefined) {
+          value.notificationPrefs[key] = Boolean(notificationPrefs[key]);
+        }
+      }
+      if (Object.keys(value.notificationPrefs).length === 0) {
+        delete value.notificationPrefs;
+        details.push("notificationPrefs must contain at least one known key.");
+      }
+    }
   }
 
   if (Object.keys(value).length === 0 && details.length === 0) {

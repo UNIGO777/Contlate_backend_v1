@@ -31,7 +31,7 @@ const getProfile = async (userId) => {
   };
 };
 
-const updateProfile = async (userId, { name, phone, avatarUrl }) => {
+const updateProfile = async (userId, { name, phone, avatarUrl, notificationPrefs }) => {
   const user = await User.findById(userId);
   if (!user || user.deletedAt) {
     throw new ApiError(404, "User not found.", { code: ERROR_CODES.AUTH_USER_NOT_FOUND });
@@ -40,6 +40,10 @@ const updateProfile = async (userId, { name, phone, avatarUrl }) => {
   if (name !== undefined) user.name = name;
   if (phone !== undefined) user.phone = phone;
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+  // Merge, so toggling one switch does not silently reset the others.
+  if (notificationPrefs) {
+    user.notificationPrefs = { ...(user.notificationPrefs?.toObject?.() ?? user.notificationPrefs ?? {}), ...notificationPrefs };
+  }
   await user.save();
 
   return { user: sanitize(user) };

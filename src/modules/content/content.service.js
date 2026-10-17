@@ -8,18 +8,30 @@ const ensureValidId = (value, label) => {
   }
 };
 
-const sanitizeContent = (content) => ({
-  id: content._id.toString(),
-  userId: content.userId.toString(),
-  businessId: content.businessId.toString(),
-  imageUrl: content.imageUrl,
-  caption: content.caption,
-  status: content.status,
-  sourceType: content.sourceType,
-  tags: content.tags,
-  createdAt: content.createdAt,
-  updatedAt: content.updatedAt,
-});
+// A published poster is deleted from our disk once it is live, so its own
+// imageUrl 404s from that moment on. The platform's copy is the only image
+// left, and the permalink is the lasting record of where it went.
+const sanitizeContent = (content) => {
+  const link = (content.socialPostUrls || []).find((u) => u.mediaUrl || u.postUrl) || {};
+  const imageUrl = content.localImageDeleted
+    ? link.mediaUrl || null
+    : content.imageUrl;
+
+  return {
+    id: content._id.toString(),
+    userId: content.userId.toString(),
+    businessId: content.businessId.toString(),
+    imageUrl,
+    caption: content.caption,
+    status: content.status,
+    sourceType: content.sourceType,
+    tags: content.tags,
+    // Where the published post lives, when there is one.
+    postUrl: link.postUrl || "",
+    createdAt: content.createdAt,
+    updatedAt: content.updatedAt,
+  };
+};
 
 const createContent = async ({ userId, businessId, payload }) => {
   const content = await Content.create({

@@ -129,12 +129,52 @@ const TEMPLATES = {
  * @param {string} [opts.userName]
  * @returns {Promise<void>}  — never throws; logs on failure
  */
+// Which switch on the notification settings screen governs each event. An
+// event with no category here is operational and always delivered.
+const TYPE_CATEGORY = {
+  POSTER_READY: "posts",
+  PROMPT_READY: "posts",
+  POSTER_POSTED: "posts",
+  POSTER_DECLINED: "posts",
+  DECLINE_DEADLINE: "posts",
+  QUEUE_POSITION: "posts",
+  PLAN_GENERATED: "posts",
+  PUBLISH_SUCCESS: "posts",
+  PUBLISH_FAILED: "posts",
+  SCHEDULE_REMINDER: "posts",
+  SCHEDULE_FAILED: "posts",
+  REVIEW_REPLIED: "reviews",
+  SOCIAL_ACCOUNT_EXPIRED: "accounts",
+  TOKEN_EXPIRING_SOON: "accounts",
+  ACCOUNT_DISCONNECTED: "accounts",
+  PERMISSIONS_REVOKED: "accounts",
+  RENEWAL_REMINDER: "billing",
+};
+
+// Reading the user costs one lookup per notification; treat a failed read as
+// "send it", because losing a notification is worse than one extra push.
+const loadPrefs = async (userId) => {
+  try {
+    const User = require("../modules/user/user.model");
+    const u = await User.findById(userId).select("notificationPrefs").lean();
+    return u?.notificationPrefs || {};
+  } catch {
+    return {};
+  }
+};
+
 const sendAppNotification = async (userId, type, data = {}, opts = {}) => {
   const templateFn = TEMPLATES[type];
   if (!templateFn) {
     logger.warn("[notifications] unknown type", { type });
     return;
   }
+
+  const prefs = await loadPrefs(userId);
+  const category = TYPE_CATEGORY[type];
+  // Turning a category off silences it everywhere, in-app included — a bell
+  // badge for something the user muted is the same nuisance as the push.
+  if (category && prefs[category] === false) return;
 
   let msg;
   try {
@@ -156,6 +196,7 @@ const sendAppNotification = async (userId, type, data = {}, opts = {}) => {
   );
 
   // ── Push notification (fire-and-forget) ───────────────────────────────────
+  if (prefs.push !== false)
   sendPushNotification(userId, {
     title: msg.title,
     body: msg.body,
@@ -165,7 +206,7 @@ const sendAppNotification = async (userId, type, data = {}, opts = {}) => {
   );
 
   // ── Email (only for critical events that have a template + a recipient) ───
-  if (msg.emailTemplate && opts.userEmail) {
+  if (msg.emailTemplate && opts.userEmail && prefs.email !== false) {
     sendEmail({
       to: opts.userEmail,
       template: msg.emailTemplate,
