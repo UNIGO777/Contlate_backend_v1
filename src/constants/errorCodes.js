@@ -24,6 +24,9 @@ const ERROR_CODES = Object.freeze({
 
   // A scheduling clash is not bad input — the app needs to tell these apart
   // so it can show the real reason instead of "check your input".
+  // The user asked for a poster of something meaningless, abusive or unsafe.
+  POSTER_INPUT_REJECTED: "POSTER_INPUT_REJECTED",
+
   SCHEDULE_CONFLICT: "SCHEDULE_CONFLICT",
 
   PLAN_LIMIT_REACHED: "PLAN_LIMIT_REACHED",

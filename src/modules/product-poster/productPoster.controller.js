@@ -52,12 +52,24 @@ const generate = asyncHandler(async (req, res) => {
     contentType: "product",
   };
 
-  // Generate prompt
-  const promptResult = await posterService.generatePosterPrompt(business, dayPlan, {
-    language,
-    style,
-    size,
-  });
+  // Generate prompt. This also vets the input: the cheap text call decides
+  // whether the topic is something we can advertise at all, so junk never
+  // reaches the expensive image call and never costs the user a poster.
+  let promptResult;
+  try {
+    promptResult = await posterService.generatePosterPrompt(business, dayPlan, {
+      language,
+      style,
+      size,
+    });
+  } catch (err) {
+    if (err.isRejectedInput) {
+      throw new ApiError(400, err.message, {
+        code: ERROR_CODES.POSTER_INPUT_REJECTED,
+      });
+    }
+    throw err;
+  }
 
   // Read product image if uploaded
   let modelImageBuffer = null;
