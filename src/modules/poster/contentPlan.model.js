@@ -73,6 +73,9 @@ const daySchema = new mongoose.Schema(
         platform: { type: String },
         postUrl: { type: String },
         postId: { type: String },
+        // Platform's copy of the image, shown once the local poster is gone.
+        mediaUrl: { type: String },
+        postedAt: { type: Date },
       },
     ],
 

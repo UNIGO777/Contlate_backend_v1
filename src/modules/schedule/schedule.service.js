@@ -283,7 +283,46 @@ const list = async (userId, { page = 1, limit = 20, status, from, to } = {}) => 
     Schedule.find(q).sort({ scheduledAt: 1 }).skip(skip).limit(limit),
     Schedule.countDocuments(q),
   ]);
-  return { data: rows.map(sanitize), page, limit, total };
+
+  // A schedule row on its own is just two ids and a time — not enough to draw
+  // a list anybody can read. Attach the poster and the account in two queries
+  // rather than one per row.
+  const contentIds = [...new Set(rows.map((r) => String(r.contentId)))];
+  const accountIds = [...new Set(rows.map((r) => String(r.socialAccountId)))];
+
+  const [contents, accounts] = await Promise.all([
+    Content.find({ _id: { $in: contentIds } })
+      .select("caption imageUrl socialPostUrls localImageDeleted")
+      .lean(),
+    SocialAccount.find({ _id: { $in: accountIds } })
+      .select("platform accountName profilePictureUrl")
+      .lean(),
+  ]);
+
+  const contentById = new Map(contents.map((c) => [String(c._id), c]));
+  const accountById = new Map(accounts.map((a) => [String(a._id), a]));
+
+  const decorate = (row) => {
+    const base = sanitize(row);
+    const c = contentById.get(base.contentId);
+    const a = accountById.get(base.socialAccountId);
+
+    // Once a poster is cleaned up its own URL 404s, so prefer the platform's
+    // copy — same rule the welcome posters follow.
+    const link = (c?.socialPostUrls || []).find((u) => u.mediaUrl || u.postUrl) || {};
+    const imageUrl = c?.localImageDeleted ? link.mediaUrl || null : c?.imageUrl || null;
+
+    return {
+      ...base,
+      platform: a?.platform || null,
+      accountName: a?.accountName || "",
+      caption: c?.caption || "",
+      imageUrl,
+      postUrl: link.postUrl || "",
+    };
+  };
+
+  return { data: rows.map(decorate), page, limit, total };
 };
 
 const getById = async (userId, scheduleId) => {

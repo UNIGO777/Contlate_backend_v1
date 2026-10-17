@@ -299,6 +299,32 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
   // otherwise the app has no way to know they were ever scheduled.
   const Schedule = require("../schedule/schedule.model");
   const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
+  const { CONTENT_STATUS } = require("../../constants/contentStatus");
+
+  // Welcome posters are not part of a content plan, so the publisher's
+  // "mark the day as posted" step never ran for them and nothing told the app
+  // they had gone live. Content.status is set on every successful publish,
+  // whichever path it took, so read it from there.
+  const postedInfoFor = async (contentId) => {
+    const empty = { posted: false, at: null, postUrl: "", mediaUrl: "" };
+    if (!contentId) return empty;
+    const content = await Content.findById(contentId)
+      .select("status socialPostUrls localImageDeleted")
+      .lean();
+    if (content?.status !== CONTENT_STATUS.PUBLISHED) return empty;
+    const row = await Schedule.findOne({ contentId, status: SCHEDULE_STATUS.PUBLISHED })
+      .sort({ publishedAt: -1 })
+      .select("publishedAt")
+      .lean();
+    // Once the local poster is cleaned up these are the only images left.
+    const link = (content.socialPostUrls || []).find((u) => u.postUrl || u.mediaUrl) || {};
+    return {
+      posted: true,
+      at: row?.publishedAt || null,
+      postUrl: link.postUrl || "",
+      mediaUrl: link.mediaUrl || "",
+    };
+  };
 
   const pendingScheduleFor = async (contentId) => {
     if (!contentId) return null;
@@ -314,27 +340,31 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
     return row.scheduledAt || row.userPreferredTime || null;
   };
 
-  let introData = { imageUrl: null, caption: null };
-  if (wp.introContentId) {
-    const content = await Content.findById(wp.introContentId).select("imageUrl caption").lean();
-    if (content) {
-      introData.imageUrl = normaliseUrl(content.imageUrl);
-      introData.caption = content.caption || null;
-    }
-  }
+  // A cleaned-up poster's URL 404s, so prefer the platform's copy and only
+  // fall back to the local one while the file is still there.
+  const imageFor = async (contentId) => {
+    if (!contentId) return { imageUrl: null, caption: null };
+    const content = await Content.findById(contentId)
+      .select("imageUrl caption socialPostUrls localImageDeleted")
+      .lean();
+    if (!content) return { imageUrl: null, caption: null };
+    const link = (content.socialPostUrls || []).find((u) => u.mediaUrl) || {};
+    const imageUrl = content.localImageDeleted
+      ? link.mediaUrl || null
+      : normaliseUrl(content.imageUrl);
+    return { imageUrl, caption: content.caption || null };
+  };
 
-  let aboutUsData = { imageUrl: null, caption: null };
-  if (wp.aboutUsContentId) {
-    const content = await Content.findById(wp.aboutUsContentId).select("imageUrl caption").lean();
-    if (content) {
-      aboutUsData.imageUrl = normaliseUrl(content.imageUrl);
-      aboutUsData.caption = content.caption || null;
-    }
-  }
+  const [introData, aboutUsData] = await Promise.all([
+    imageFor(wp.introContentId),
+    imageFor(wp.aboutUsContentId),
+  ]);
 
-  const [introPostAt, aboutUsPostAt] = await Promise.all([
+  const [introPostAt, aboutUsPostAt, introPosted, aboutUsPosted] = await Promise.all([
     pendingScheduleFor(wp.introContentId),
     pendingScheduleFor(wp.aboutUsContentId),
+    postedInfoFor(wp.introContentId),
+    postedInfoFor(wp.aboutUsContentId),
   ]);
 
   return res.json(
@@ -352,6 +382,16 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
       // When the post actually goes live, once the user has scheduled it.
       introPostAt: introPostAt ? introPostAt.toISOString() : null,
       aboutUsPostAt: aboutUsPostAt ? aboutUsPostAt.toISOString() : null,
+      // Already live on at least one account.
+      introPosted: introPosted.posted,
+      aboutUsPosted: aboutUsPosted.posted,
+      introPostedAt: introPosted.at ? introPosted.at.toISOString() : null,
+      aboutUsPostedAt: aboutUsPosted.at ? aboutUsPosted.at.toISOString() : null,
+      // Where the post lives, and the platform's image to fall back on.
+      introPostUrl: introPosted.postUrl,
+      aboutUsPostUrl: aboutUsPosted.postUrl,
+      introPostedImageUrl: introPosted.mediaUrl,
+      aboutUsPostedImageUrl: aboutUsPosted.mediaUrl,
     })
   );
 });

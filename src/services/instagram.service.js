@@ -285,6 +285,21 @@ const waitForContainer = async (containerId, accessToken) => {
 const isInstagramLoginAccount = (account) =>
   (account?.grantedScopes || []).some((x) => x.startsWith("instagram_business_"));
 
+// permalink is a stable public URL for the post. mediaUrl is Instagram's CDN
+// copy of the image — handy, but Meta serves it from signed URLs that expire,
+// so it must never be the only copy anything depends on.
+const getMediaInfo = async (mediaId, accessToken) => {
+  const data = await igGet(`/${mediaId}`, {
+    fields: "permalink,media_url,media_type",
+    access_token: accessToken,
+  });
+  return {
+    permalink: data.permalink || "",
+    mediaUrl: data.media_url || "",
+    mediaType: data.media_type || "",
+  };
+};
+
 const publish = async ({ account, content }) => {
   if (!account.accessToken) {
     throw new Error("Instagram account has no access token. Reconnect required.");
@@ -313,12 +328,21 @@ const publish = async ({ account, content }) => {
     access_token: accessToken,
   });
 
-  return { externalPostId: published.id };
+  // The media id alone is not a web address — instagram.com/<id> is a dead
+  // link. The real permalink has to be read back from the API.
+  const info = await getMediaInfo(published.id, accessToken).catch(() => ({}));
+
+  return {
+    externalPostId: published.id,
+    permalink: info.permalink || "",
+    mediaUrl: info.mediaUrl || "",
+  };
 };
 
 module.exports = {
   SCOPES,
   publish,
+  getMediaInfo,
   isInstagramLoginAccount,
   ensureConfigured,
   buildState,

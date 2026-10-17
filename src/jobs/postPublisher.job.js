@@ -278,10 +278,11 @@ const processOne = async (schedule) => {
 
   await markPublished(schedule, result.externalPostId);
 
-  // Create publish log for successful publish
-  const postUrl = result.externalPostId
-    ? `https://www.${account.platform}.com/${result.externalPostId}`
-    : "";
+  // Create publish log for successful publish.
+  // instagram.com/<media-id> is not a real address, so only a permalink the
+  // platform actually gave us is worth storing — a fabricated one is worse
+  // than none, because the UI will happily link to it.
+  const postUrl = result.permalink || "";
   PublishLog.create({
     scheduleId: schedule._id,
     socialAccountId: account._id,
@@ -342,8 +343,18 @@ const processOne = async (schedule) => {
     });
   }
 
-  // Queue poster cleanup if this content has a local image file
-  if (content.localImagePath && !content.localImageDeleted) {
+  // Queue poster cleanup only once nothing else still needs the image.
+  // Publishing to a second account, or a second schedule on the same content,
+  // re-reads this file by URL — deleting it after the first publish left the
+  // later one fetching a 404, which Instagram reports as an invalid media
+  // type rather than a missing file.
+  const stillNeeded = await Schedule.exists({
+    contentId: content._id,
+    _id: { $ne: schedule._id },
+    status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PROCESSING] },
+  });
+
+  if (content.localImagePath && !content.localImageDeleted && !stillNeeded) {
     try {
       const { getQueues } = require("../queues/queues");
       const queues = getQueues();
@@ -351,12 +362,15 @@ const processOne = async (schedule) => {
         `cleanup-${content._id}`,
         {
           contentId: content._id.toString(),
+          // Where the post actually lives, plus Instagram's own copy of the
+          // image, so the app has something to show once the file is gone.
           socialPostUrls: [
             {
               platform: account.platform,
               accountId: account.accountId,
-              postUrl: result.externalPostId ? `https://${account.platform}.com/${result.externalPostId}` : "",
+              postUrl: result.permalink || "",
               postId: result.externalPostId || "",
+              mediaUrl: result.mediaUrl || "",
               postedAt: new Date().toISOString(),
             },
           ],

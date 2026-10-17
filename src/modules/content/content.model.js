@@ -55,6 +55,10 @@ const contentSchema = new mongoose.Schema(
         accountId: { type: String },
         postUrl: { type: String },
         postId: { type: String },
+        // The platform's own copy of the image, used once the local file is
+        // cleaned up. Meta serves these from signed URLs that expire, so it
+        // is a convenience, not a durable store.
+        mediaUrl: { type: String },
         postedAt: { type: Date },
       },
     ],
