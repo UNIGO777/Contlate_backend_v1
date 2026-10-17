@@ -34,7 +34,7 @@ const generate = asyncHandler(async (req, res) => {
   const dateKey = new Date().toISOString().split("T")[0];
   const usage = await Usage.findOne({ userId: req.user.id, dateKey }).lean();
   const limit = PLAN_LIMITS[req.user.plan]?.aiPostersPerDay || 1;
-  if ((usage?.aiPostersCount || 0) >= limit) {
+  if (!env.relaxPlanLimits && (usage?.aiPostersCount || 0) >= limit) {
     throw new ApiError(429, "Daily poster limit reached.", { code: "POSTER_LIMIT_REACHED" });
   }
 

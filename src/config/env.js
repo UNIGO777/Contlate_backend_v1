@@ -103,11 +103,17 @@ const env = {
     retrySyncDelayMs: toInt(process.env.GBP_RETRY_SYNC_DELAY_MS, 5_000),
   },
 
+  // Testing escape hatch for every per-plan daily cap: AI posters, scheduled
+  // posts, uploads. Never enable in production — it is the only thing that
+  // keeps a free account from running up a real OpenAI bill.
+  relaxPlanLimits: toBool(process.env.RELAX_PLAN_LIMITS, false),
+
   schedule: {
-    // Testing escape hatch. Lifts the per-plan daily cap and the per-account
-    // minimum gap between posts, so several posts can be put on one date.
+    // Kept so an existing .env keeps working; RELAX_PLAN_LIMITS covers it too.
     // Meta's own 25/day ceiling still applies and is still enforced.
-    relaxLimits: toBool(process.env.SCHEDULE_RELAX_LIMITS, false),
+    relaxLimits:
+      toBool(process.env.SCHEDULE_RELAX_LIMITS, false) ||
+      toBool(process.env.RELAX_PLAN_LIMITS, false),
   },
 
   dataForSeo: {

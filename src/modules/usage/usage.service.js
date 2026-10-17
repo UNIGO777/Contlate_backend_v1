@@ -1,4 +1,5 @@
 const ApiError = require("../../core/ApiError");
+const env = require("../../config/env");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const { PLAN_LIMITS, USAGE_COUNTER_TO_LIMIT_KEY } = require("../../constants/limits");
 const { PLANS } = require("../../constants/plans");
@@ -47,7 +48,12 @@ const getUsageSummary = async (userId) => {
   for (const [counter, limitKey] of Object.entries(USAGE_COUNTER_TO_LIMIT_KEY)) {
     if (!limitKey) continue;
     const limit = limits?.[limitKey];
-    remaining[counter] = typeof limit === "number" ? Math.max(0, limit - usage[counter]) : null;
+    // null means "no limit", which is what the app shows when relaxed. Without
+    // this the button would stay disabled on a cap the server is ignoring.
+    remaining[counter] =
+      env.relaxPlanLimits || typeof limit !== "number"
+        ? null
+        : Math.max(0, limit - usage[counter]);
   }
 
   return {
@@ -110,6 +116,7 @@ const LIMIT_MESSAGE = {
 
 const assertUsageWithinLimit = async (userId, field) => {
   const res = await checkLimit(userId, field);
+  if (env.relaxPlanLimits) return res;
   if (res.limit !== null && res.used >= res.limit) {
     const message =
       LIMIT_MESSAGE[field]?.(res.limit) ?? `Daily limit reached for ${field}.`;
