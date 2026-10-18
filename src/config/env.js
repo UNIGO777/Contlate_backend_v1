@@ -108,6 +108,11 @@ const env = {
   // keeps a free account from running up a real OpenAI bill.
   relaxPlanLimits: toBool(process.env.RELAX_PLAN_LIMITS, false),
 
+  // Lets a user switch their own plan with no payment. This exists so paid
+  // features can be exercised before the gateway is wired up; with it on,
+  // anyone with an account can give themselves Advanced for free.
+  allowDirectPlanChange: toBool(process.env.ALLOW_DIRECT_PLAN_CHANGE, false),
+
   schedule: {
     // Kept so an existing .env keeps working; RELAX_PLAN_LIMITS covers it too.
     // Meta's own 25/day ceiling still applies and is still enforced.

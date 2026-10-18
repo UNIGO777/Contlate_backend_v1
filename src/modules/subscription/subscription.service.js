@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const env = require("../../config/env");
+const { ERROR_CODES } = require("../../constants/errorCodes");
 const ApiError = require("../../core/ApiError");
 const { PLANS, PLAN_DETAILS, getPriceForPlan } = require("../../constants/plans");
 const { BILLING_CYCLES } = require("../../constants/billingCycles");
@@ -65,10 +66,22 @@ const getSubscriptionByUserId = async (userId) => {
   return {
     subscription:   sanitizeSubscription(subscription),
     availablePlans: getAvailablePlans(),
+    // The app uses this to decide between activating a plan outright and
+    // sending the user to the payment page.
+    directActivation: env.allowDirectPlanChange,
   };
 };
 
 const changePlan = async (userId, { plan, billingCycle }) => {
+  // Without this guard the endpoint is a free upgrade for anyone who finds
+  // it — it sets the plan directly, with no payment anywhere in the path.
+  // Downgrading to the free plan is always allowed.
+  if (!env.allowDirectPlanChange && plan !== PLANS.BASIC) {
+    throw new ApiError(403, "Plan changes go through checkout.", {
+      code: ERROR_CODES.PLAN_UPGRADE_REQUIRED,
+    });
+  }
+
   const { user, subscription } = await ensureSubscriptionForUser(userId);
 
   const is28d = billingCycle === BILLING_CYCLES.CYCLE_28D;
