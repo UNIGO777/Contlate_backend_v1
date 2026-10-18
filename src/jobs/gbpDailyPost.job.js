@@ -128,10 +128,36 @@ const findDueBusinesses = async () => {
 };
 
 /** Write the post copy for a keyword. Reuses the poster prompt pipeline. */
+/* Angles to write from, so the same keyword never produces the same post.
+   With 15 keywords each comes round about twice a month; without this they
+   would read as 24 near-identical updates a year. */
+const ANGLES = [
+  "a job you recently finished for a local customer",
+  "a question customers keep asking, answered plainly",
+  "what is included, and what it actually costs",
+  "a mistake people make, and what to do instead",
+  "who this suits and who it does not",
+  "what changes for the customer afterwards",
+  "how long it takes and what happens on the day",
+];
+
 const buildPost = async (business, keyword) => {
+  // The keyword seeds the subject; it is never the subject itself. Writing
+  // *about* a keyword is the pattern Google calls out — "posts loading
+  // updates with keywords rather than useful information" — and it gets the
+  // post quietly suppressed rather than banned. A real story that happens to
+  // contain the phrase ranks; a post aimed at the phrase does not.
+  const angle = ANGLES[Math.floor(Math.random() * ANGLES.length)];
+
   const dayPlan = {
-    topic: `${keyword} — ${business.businessName}`,
-    description: `A Google Business Profile update for customers searching "${keyword}". Local, specific, and useful.`,
+    topic: `${business.businessName} — ${angle}`,
+    description:
+      `Write a short Google Business Profile update: ${angle}. ` +
+      `It should relate naturally to "${keyword}", but do NOT write about that ` +
+      `phrase, do not repeat it, and do not use it as a heading. Mention it ` +
+      `once at most, only where a person would say it anyway. ` +
+      `Write as the business owner, in plain language, about something real ` +
+      `and specific. No hashtags, no keyword lists, no marketing filler.`,
     contentType: "gbp-post",
   };
 
@@ -173,23 +199,18 @@ const runOnce = async () => {
         continue;
       }
 
-      const image = await posterService.generatePosterImage(
-        prompt.fullPrompt,
-        {
-          headline: prompt.headline,
-          tagline: prompt.tagline,
-          offer: prompt.offer,
-          cta: prompt.cta,
-        },
-        business,
-        { size: "4:5" }
-      );
-      const saved = await posterService.savePosterLocally(
-        image.imageBuffer,
-        business._id,
-        `gbp_${Date.now()}`
-      );
-
+      // No image, on purpose.
+      //
+      // Google requires profile media to "represent reality", rejects
+      // AI-generated pictures outright, caps text overlay at 10% of the
+      // frame on a single edge, and forbids contact details inside an image.
+      // Our posters are AI-generated and deliberately burn in six text
+      // elements including the phone number — perfect for Instagram, three
+      // separate violations here.
+      //
+      // A text-only local post is fully valid, so this sidesteps the policy
+      // instead of gambling on it. It also means a GBP post costs one cheap
+      // text call rather than an image generation every day per business.
       const slot = await nextSlotFor(business._id);
 
       post = await GbpPost.create({
@@ -197,16 +218,14 @@ const runOnce = async () => {
         businessId: business._id,
         keyword,
         summary,
-        imageUrl: saved.publicUrl,
-        localImagePath: saved.localPath,
         callToAction: { actionType: "LEARN_MORE", url: business.website || "" },
         status: GBP_POST_STATUS.READY,
         scheduledFor: slot,
         declineDeadlineAt: new Date(slot.getTime() - DECLINE_LEAD_MS),
         generationCost: {
           gptCost: prompt.gptCost,
-          imageCost: image.imageCost,
-          totalCost: prompt.gptCost + image.imageCost,
+          imageCost: 0,
+          totalCost: prompt.gptCost,
         },
       });
       created++;
