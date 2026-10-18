@@ -339,8 +339,48 @@ const listPosts = asyncHandler(async (req, res) => {
     { $group: { _id: null, views: { $sum: "$metrics.views" }, clicks: { $sum: "$metrics.clicks" } } },
   ]);
 
+  // What is coming, without writing it yet.
+  //
+  // A month of GBP copy written in advance reads as filler — the angles are
+  // about recent, real things, which only work written close to the day. So
+  // the plan shown here is the keyword rotation, not pre-written posts.
+  const AiSeo = require("../ai-seo/aiSeo.model");
+  const seo = await AiSeo.findOne({ businessId }).select("keywords").lean();
+  const allKeywords = (seo?.keywords || []).map((k) => k.keyword).filter(Boolean);
+
+  // Same least-recently-used order the job picks with, so this is a real
+  // forecast rather than a guess.
+  const recent = await GbpPost.find({ businessId })
+    .sort({ createdAt: -1 })
+    .limit(allKeywords.length || 1)
+    .select("keyword")
+    .lean();
+
+  const usedAt = new Map();
+  recent.forEach((p, i) => {
+    if (p.keyword && !usedAt.has(p.keyword)) usedAt.set(p.keyword, i);
+  });
+
+  const queued = [...allKeywords].sort((a, b) => {
+    const ra = usedAt.has(a) ? usedAt.get(a) : Number.MAX_SAFE_INTEGER;
+    const rb = usedAt.has(b) ? usedAt.get(b) : Number.MAX_SAFE_INTEGER;
+    return rb - ra;
+  });
+
+  // Day 1 is tomorrow, since today's post is already written.
+  const startsAt = new Date();
+  startsAt.setDate(startsAt.getDate() + 1);
+
+  const upcoming = queued.slice(0, 7).map((keyword, i) => {
+    const d = new Date(startsAt);
+    d.setDate(d.getDate() + i);
+    return { keyword, date: d.toISOString() };
+  });
+
   return res.json(
     new ApiResponse(200, {
+      upcoming,
+      keywordCount: allKeywords.length,
       posts: posts.map((p) => ({
         id: p._id.toString(),
         keyword: p.keyword,

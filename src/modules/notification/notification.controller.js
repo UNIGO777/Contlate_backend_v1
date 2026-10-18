@@ -25,11 +25,16 @@ const getNotifications = asyncHandler(async (req, res) => {
 });
 
 const markRead = asyncHandler(async (req, res) => {
-  const { notificationId, all } = req.body;
+  const { notificationId, notificationIds, all } = req.body;
 
   if (all) {
     await Notification.updateMany(
       { userId: req.user.id, read: false },
+      { $set: { read: true } }
+    );
+  } else if (Array.isArray(notificationIds) && notificationIds.length) {
+    await Notification.updateMany(
+      { _id: { $in: notificationIds.slice(0, 100) }, userId: req.user.id, read: false },
       { $set: { read: true } }
     );
   } else if (notificationId) {

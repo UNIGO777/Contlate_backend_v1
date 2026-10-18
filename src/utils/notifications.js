@@ -24,7 +24,7 @@ const { send: sendEmail } = require("../services/mail.service");
 const TEMPLATES = {
   POSTER_READY: ({ dayNumber }) => ({
     notifType: "plan_day_ready",
-    title: "Your poster is ready! 🎨",
+    title: "Your poster is ready",
     body: `Day ${dayNumber} poster is done. Tap to review before it auto-posts.`,
   }),
   PROMPT_READY: ({ dayNumber }) => ({
@@ -34,7 +34,7 @@ const TEMPLATES = {
   }),
   POSTER_POSTED: ({ dayNumber, platform }) => ({
     notifType: "plan_day_posted",
-    title: "Post is live! ✅",
+    title: "Post is live",
     body: `Your Day ${dayNumber} post went live${platform ? ` on ${platform}` : ""}.`,
   }),
   POSTER_DECLINED: ({ dayNumber }) => ({
@@ -44,7 +44,7 @@ const TEMPLATES = {
   }),
   DECLINE_DEADLINE: ({ dayNumber, hoursLeft }) => ({
     notifType: "plan_day_ready",
-    title: "Last chance to decline ⏰",
+    title: "Last chance to decline",
     body: `Day ${dayNumber} auto-posts in ${hoursLeft}h. Open app to decline.`,
   }),
   QUEUE_POSITION: ({ dayNumber, position }) => ({
@@ -54,7 +54,7 @@ const TEMPLATES = {
   }),
   PLAN_GENERATED: () => ({
     notifType: "plan_day_ready",
-    title: "Your 28-day plan is ready! 🚀",
+    title: "Your 28-day plan is ready",
     body: "AI created your full content plan. Tap to explore all 28 days.",
   }),
   RENEWAL_REMINDER: () => ({
@@ -76,7 +76,7 @@ const TEMPLATES = {
   }),
   PUBLISH_SUCCESS: ({ platform, accountName }) => ({
     notifType: "publish_success",
-    title: "Post is live! ✅",
+    title: "Post is live",
     body: `Your post went live${accountName ? ` on ${accountName}` : platform ? ` on ${platform}` : ""}.`,
   }),
   PUBLISH_FAILED: ({ platform, accountName, error }) => ({
@@ -99,7 +99,7 @@ const TEMPLATES = {
   }),
   SCHEDULE_REMINDER: ({ minutesLeft }) => ({
     notifType: "schedule_reminder",
-    title: "Post going live soon ⏰",
+    title: "Post going live soon",
     body: `One of your scheduled posts goes live in ${minutesLeft || 30} minutes.`,
   }),
   SCHEDULE_FAILED: ({ platform, accountName, error, reason, paused }) => ({
@@ -110,7 +110,7 @@ const TEMPLATES = {
   }),
   REVIEW_REPLIED: ({ authorName, starRating, replyText }) => ({
     notifType: "review_replied",
-    title: `New ${starRating ? `${starRating}★ ` : ""}review — replied ⭐`,
+    title: `New ${starRating ? `${starRating}-star ` : ""}review — replied`,
     body: `${authorName || "A customer"} left a review and we posted a reply for you: "${String(replyText || "").slice(0, 90)}${String(replyText || "").length > 90 ? "…" : ""}"`,
   }),
   GENERAL: ({ title, body }) => ({
