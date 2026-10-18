@@ -1,5 +1,7 @@
 const express = require("express");
 const checkBusinessMiddleware = require("../../middlewares/checkBusiness.middleware");
+const checkPlan = require("../../middlewares/checkPlan.middleware");
+const { PLANS } = require("../../constants/plans");
 const gbpController = require("./gbp.controller");
 
 const router = express.Router();
@@ -35,6 +37,10 @@ router.post("/reviews/:reviewId/ai-draft", gbpController.draftReviewReply);
 router.post("/reviews/:reviewId/reply", gbpController.replyToReview);
 
 // DELETE /business/gbp/disconnect — remove tokens, user can reconnect
+// GBP posting feed + analytics. Advanced plan only.
+router.get("/posts", checkPlan(PLANS.ADVANCED), gbpController.listPosts);
+router.post("/posts/:postId/decline", checkPlan(PLANS.ADVANCED), gbpController.declinePost);
+
 router.delete("/disconnect", gbpController.disconnect);
 
 module.exports = router;

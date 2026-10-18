@@ -290,7 +290,143 @@ const replyToReview = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, data, "Reply posted."));
 });
 
+// ── GET /business/gbp/posts ─────────────────────────────────────────────────
+// The GBP posting feed plus the counts the home tab needs. Advanced only —
+// Pro buys the social calendar, GBP SEO is what Advanced adds.
+const listPosts = asyncHandler(async (req, res) => {
+  const GbpPost = require("./gbpPost.model");
+  const { GBP_POST_STATUS } = GbpPost;
+  const businessId = req.business._id;
+
+  const limit = Math.min(60, Number.parseInt(req.query.limit, 10) || 30);
+
+  const [posts, counts] = await Promise.all([
+    GbpPost.find({ businessId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select("keyword summary imageUrl status scheduledFor declineDeadlineAt publishedAt googleSearchUrl metrics lastError createdAt")
+      .lean(),
+    GbpPost.aggregate([
+      { $match: { businessId } },
+      { $group: { _id: "$status", n: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const byStatus = {};
+  counts.forEach((c) => { byStatus[c._id] = c.n; });
+
+  // Growth over the two most recent 28-day windows. Comparing like-for-like
+  // periods is the only honest way to call it growth.
+  const now = new Date();
+  const periodStart = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+  const priorStart = new Date(now.getTime() - 56 * 24 * 60 * 60 * 1000);
+
+  const [thisPeriod, lastPeriod] = await Promise.all([
+    GbpPost.countDocuments({
+      businessId,
+      status: GBP_POST_STATUS.PUBLISHED,
+      publishedAt: { $gte: periodStart },
+    }),
+    GbpPost.countDocuments({
+      businessId,
+      status: GBP_POST_STATUS.PUBLISHED,
+      publishedAt: { $gte: priorStart, $lt: periodStart },
+    }),
+  ]);
+
+  const viewsAgg = await GbpPost.aggregate([
+    { $match: { businessId, "metrics.views": { $ne: null } } },
+    { $group: { _id: null, views: { $sum: "$metrics.views" }, clicks: { $sum: "$metrics.clicks" } } },
+  ]);
+
+  return res.json(
+    new ApiResponse(200, {
+      posts: posts.map((p) => ({
+        id: p._id.toString(),
+        keyword: p.keyword,
+        summary: p.summary,
+        imageUrl: p.imageUrl || null,
+        status: p.status,
+        scheduledFor: p.scheduledFor,
+        declineDeadlineAt: p.declineDeadlineAt,
+        // Whether the owner can still stop it, worked out server-side so the
+        // app does not have to reason about clock drift.
+        canDecline:
+          p.status === "ready" &&
+          !!p.declineDeadlineAt &&
+          new Date() < new Date(p.declineDeadlineAt),
+        publishedAt: p.publishedAt,
+        searchUrl: p.googleSearchUrl || "",
+        views: p.metrics?.views ?? null,
+        clicks: p.metrics?.clicks ?? null,
+        lastError: p.lastError || "",
+        createdAt: p.createdAt,
+      })),
+      summary: {
+        created: Object.values(byStatus).reduce((a, b) => a + b, 0),
+        published: byStatus[GBP_POST_STATUS.PUBLISHED] || 0,
+        pending: (byStatus[GBP_POST_STATUS.READY] || 0) + (byStatus[GBP_POST_STATUS.DRAFT] || 0),
+        failed: byStatus[GBP_POST_STATUS.FAILED] || 0,
+        totalViews: viewsAgg[0]?.views ?? null,
+        totalClicks: viewsAgg[0]?.clicks ?? null,
+        // null rather than 0 when there is nothing to compare against — an
+        // untested period is not a flat one.
+        growthPct:
+          lastPeriod > 0
+            ? Math.round(((thisPeriod - lastPeriod) / lastPeriod) * 100)
+            : null,
+        publishedThisPeriod: thisPeriod,
+        publishedLastPeriod: lastPeriod,
+      },
+    }, "GBP posts fetched.")
+  );
+});
+
+// ── POST /business/gbp/posts/:postId/decline ────────────────────────────────
+// Stops a scheduled Google post before it goes out. Allowed up to the decline
+// deadline, which is two hours before the slot — after that Google is about
+// to be told about it and pulling it back is no longer clean.
+const declinePost = asyncHandler(async (req, res) => {
+  const GbpPost = require("./gbpPost.model");
+  const { GBP_POST_STATUS } = GbpPost;
+
+  const post = await GbpPost.findOne({
+    _id: req.params.postId,
+    businessId: req.business._id,
+  });
+  if (!post) {
+    throw new ApiError(404, "Post not found.", { code: ERROR_CODES.NOT_FOUND });
+  }
+
+  if (post.status === GBP_POST_STATUS.PUBLISHED) {
+    throw new ApiError(400, "This post is already live on your profile.", {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+  if (post.status === GBP_POST_STATUS.DECLINED) {
+    return res.json(new ApiResponse(200, { id: post._id.toString() }, "Already declined."));
+  }
+  if (post.status !== GBP_POST_STATUS.READY) {
+    throw new ApiError(400, "This post can no longer be declined.", {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+  if (post.declineDeadlineAt && new Date() > post.declineDeadlineAt) {
+    throw new ApiError(400, "The deadline to decline this post has passed.", {
+      code: ERROR_CODES.VALIDATION_FAILED,
+    });
+  }
+
+  post.status = GBP_POST_STATUS.DECLINED;
+  post.declinedAt = new Date();
+  await post.save();
+
+  return res.json(new ApiResponse(200, { id: post._id.toString() }, "Post declined."));
+});
+
 module.exports = {
+  listPosts,
+  declinePost,
   getConnectUrl,
   getInsights,
   getReviews,

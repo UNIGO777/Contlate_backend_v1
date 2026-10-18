@@ -8,6 +8,7 @@ const subscriptionSyncJob = require("./jobs/subscriptionSync.job");
 const postPublisherJob = require("./jobs/postPublisher.job");
 const seoRefreshJob = require("./jobs/seoRefresh.job");
 const tokenRefreshJob = require("./jobs/tokenRefresh.job");
+const gbpDailyPostJob = require("./jobs/gbpDailyPost.job");
 const accountHealthCheckJob = require("./jobs/accountHealthCheck.job");
 const reviewAutoReplyJob = require("./jobs/reviewAutoReply.job");
 
@@ -51,6 +52,7 @@ const startServer = async () => {
     postPublisherJob.start();
     seoRefreshJob.start();
     tokenRefreshJob.start();
+    gbpDailyPostJob.start();
     accountHealthCheckJob.start();
     reviewAutoReplyJob.start();
 

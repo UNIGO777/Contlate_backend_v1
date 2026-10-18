@@ -103,6 +103,34 @@ const start = () => {
 
       await Business.updateOne({ _id: businessId }, { $set: updateField });
 
+      // The same two days also exist in the content plan as "Intro" and
+      // "About Us", and nothing linked the two. The plan kept showing them as
+      // queued for ever while the home screen showed finished posters,
+      // because only the business record was being updated here.
+      try {
+        const ContentPlan = require("../../modules/poster/contentPlan.model");
+        const dayNumber = posterType === "intro" ? 1 : 2;
+        await ContentPlan.updateOne(
+          { businessId, status: "active", "days.dayNumber": dayNumber },
+          {
+            $set: {
+              "days.$.contentId": content._id,
+              "days.$.imageUrl": publicUrl,
+              "days.$.caption": content.caption || "",
+              "days.$.planStatus": "ready",
+              "days.$.promptStatus": "ready",
+              "days.$.imageStatus": "ready",
+            },
+          }
+        );
+      } catch (err) {
+        // The poster itself is saved; a stale plan row must not fail the job.
+        logger.warn("[welcomePoster.worker] plan day sync failed", {
+          businessId: String(businessId),
+          message: err.message,
+        });
+      }
+
       // Emit socket event so frontend shows congrats popup immediately
       try {
         const { getIO } = require("../../core/socket");
