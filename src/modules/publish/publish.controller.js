@@ -11,7 +11,7 @@ const publishNow = asyncHandler(async (req, res) => {
   const { contentId, socialAccountIds } = req.body;
 
   const results = await publishService.publishNow(
-    req.user._id,
+    req.user.id,
     req.business._id,
     { contentId, socialAccountIds }
   );
@@ -39,7 +39,7 @@ const publishNow = asyncHandler(async (req, res) => {
 const listLogs = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, platform, status, publishType } = req.query;
 
-  const result = await publishService.listLogs(req.user._id, {
+  const result = await publishService.listLogs(req.user.id, {
     page: Number(page),
     limit: Math.min(Number(limit), 50),
     platform,
@@ -57,7 +57,7 @@ const listLogs = asyncHandler(async (req, res) => {
 const getLogsBySchedule = asyncHandler(async (req, res) => {
   const { scheduleId } = req.params;
 
-  const logs = await publishService.getLogsBySchedule(req.user._id, scheduleId);
+  const logs = await publishService.getLogsBySchedule(req.user.id, scheduleId);
 
   return res.status(200).json(new ApiResponse(200, { logs }, "Schedule logs fetched."));
 });

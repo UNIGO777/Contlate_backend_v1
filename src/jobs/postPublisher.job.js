@@ -319,7 +319,7 @@ const processOne = async (schedule) => {
         "days.$.postedAt": now,
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (planUpdate) {

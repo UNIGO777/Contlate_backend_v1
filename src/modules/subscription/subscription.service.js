@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const env = require("../../config/env");
+const logger = require("../../core/logger");
 const { ERROR_CODES } = require("../../constants/errorCodes");
 const ApiError = require("../../core/ApiError");
 const { PLANS, PLAN_DETAILS, getPriceForPlan } = require("../../constants/plans");
@@ -72,6 +73,22 @@ const getSubscriptionByUserId = async (userId) => {
   };
 };
 
+// Auto-posting is switched off for free accounts, and nothing switched it
+// back on when they paid — so a paying user's plan generated posters that the
+// scheduler then refused to queue, and nothing ever went live.
+const syncAutopilotToPlan = async (userId, plan) => {
+  try {
+    const Business = require("../business/business.model");
+    await Business.updateMany(
+      { userId },
+      { $set: { "autopilot.enabled": plan !== PLANS.BASIC } }
+    );
+  } catch (err) {
+    // Never fail a plan change over this; the toggle is also user-editable.
+    logger.warn("[subscription] autopilot sync failed", { message: err.message });
+  }
+};
+
 const changePlan = async (userId, { plan, billingCycle }) => {
   // Without this guard the endpoint is a free upgrade for anyone who finds
   // it — it sets the plan directly, with no payment anywhere in the path.
@@ -109,6 +126,7 @@ const changePlan = async (userId, { plan, billingCycle }) => {
   await subscription.save();
   user.plan = plan;
   await user.save();
+  await syncAutopilotToPlan(userId, plan);
 
   return {
     subscription:   sanitizeSubscription(subscription),
@@ -127,6 +145,7 @@ const cancelSubscription = async (userId) => {
 
   user.plan = PLANS.BASIC;
   await user.save();
+  await syncAutopilotToPlan(userId, PLANS.BASIC);
 
   return {
     subscription:   sanitizeSubscription(subscription),
@@ -167,6 +186,7 @@ const createCheckout = async (userId, { plan, billingType }, { baseUrl, callback
 };
 
 module.exports = {
+  syncAutopilotToPlan,
   getSubscriptionByUserId,
   changePlan,
   cancelSubscription,

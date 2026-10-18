@@ -98,7 +98,7 @@ const generateKeywords = async (userId, businessId) => {
         lastError: "",
       },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   try {
@@ -143,7 +143,7 @@ const generateKeywords = async (userId, businessId) => {
           lastError: "",
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     logger.info("[ai-seo] keywords generated", {
@@ -230,7 +230,7 @@ const refreshKeywords = async (businessId) => {
         lastRefreshedAt: new Date(),
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   logger.info("[ai-seo] keywords refreshed", {

@@ -134,7 +134,7 @@ async function updateCache(cacheKey, { category, city, state, locationName, keyw
         premiumUserCount: 0,
       },
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
 
   logger.info("SEO cache updated", {

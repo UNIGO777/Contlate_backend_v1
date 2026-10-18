@@ -2,6 +2,7 @@ const logger = require("../core/logger");
 const { PLANS } = require("../constants/plans");
 const { SUBSCRIPTION_STATUS } = require("../constants/subscriptionStatus");
 const Subscription = require("../modules/subscription/subscription.model");
+const { syncAutopilotToPlan } = require("../modules/subscription/subscription.service");
 const User = require("../modules/user/user.model");
 const seoPlanChange = require("../services/seoPlanChange.service");
 
@@ -20,6 +21,7 @@ const expireDueTrials = async (now) => {
     sub.endsAt = now;
     await sub.save();
     await User.updateOne({ _id: sub.userId }, { $set: { plan: PLANS.BASIC } });
+    await syncAutopilotToPlan(sub.userId, PLANS.BASIC);
     logger.info("[subscriptionSync] trial expired", { userId: sub.userId.toString() });
 
     // SEO plan change (fire-and-forget)
@@ -47,6 +49,7 @@ const expireDuePaidPlans = async (now) => {
     sub.plan = PLANS.BASIC;
     await sub.save();
     await User.updateOne({ _id: sub.userId }, { $set: { plan: PLANS.BASIC } });
+    await syncAutopilotToPlan(sub.userId, PLANS.BASIC);
     logger.info("[subscriptionSync] subscription expired", { userId: sub.userId.toString() });
 
     // SEO plan change (fire-and-forget)

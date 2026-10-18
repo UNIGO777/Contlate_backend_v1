@@ -196,7 +196,7 @@ async function getInsights(businessId, { force = false } = {}) {
         lastError: null,
         lastErrorAt: null,
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
 
     logger.info("[gbp] insights refreshed", {

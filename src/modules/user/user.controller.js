@@ -41,13 +41,13 @@ const registerPushToken = asyncHandler(async (req, res) => {
   // Remove any existing entry for this token, then push the refreshed one.
   // This keeps the array clean even if the same device re-registers.
   await User.updateOne(
-    { _id: req.user._id },
+    { _id: req.user.id },
     {
       $pull: { expoPushTokens: { token } },
     }
   );
   await User.updateOne(
-    { _id: req.user._id },
+    { _id: req.user.id },
     {
       $push: {
         expoPushTokens: {
@@ -66,7 +66,7 @@ const registerPushToken = asyncHandler(async (req, res) => {
 const removePushToken = asyncHandler(async (req, res) => {
   const { token } = req.body;
   if (token) {
-    await User.updateOne({ _id: req.user._id }, { $pull: { expoPushTokens: { token } } });
+    await User.updateOne({ _id: req.user.id }, { $pull: { expoPushTokens: { token } } });
   }
   return res.json(new ApiResponse(200, null, "Push token removed."));
 });

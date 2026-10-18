@@ -1,4 +1,5 @@
 const express = require("express");
+const { syncAutopilotToPlan } = require("./subscription.service");
 const asyncHandler = require("../../core/asyncHandler");
 const ApiResponse = require("../../core/ApiResponse");
 const ApiError = require("../../core/ApiError");
@@ -103,6 +104,8 @@ router.post(
           await subscription.save();
 
           user.plan = planCode;
+          // Paid through the gateway — turn auto-posting back on.
+          await syncAutopilotToPlan(user._id, planCode);
           await user.save();
         }
       } catch (err) {

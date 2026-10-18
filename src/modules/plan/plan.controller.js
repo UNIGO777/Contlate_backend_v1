@@ -14,7 +14,7 @@ const logger = require("../../core/logger");
 // Returns existing BusinessOffers (if any) and the business's current service
 // list so the frontend can pre-populate the form.
 const getSetup = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
+  const userId = req.user.id;
   const business = req.business;
 
   const existing = await BusinessOffers.findOne({ userId }).lean();
@@ -30,7 +30,7 @@ const getSetup = asyncHandler(async (req, res) => {
 // ── POST /plan/setup ─────────────────────────────────────────────────────────
 // Saves / updates BusinessOffers and autoPostTime.
 const saveSetup = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
+  const userId = req.user.id;
   const businessId = req.business._id;
   const { businessType, products, services, autoPostTime } = req.body;
 
@@ -51,7 +51,7 @@ const saveSetup = asyncHandler(async (req, res) => {
       services: businessType === "service" ? (services ?? []) : [],
       autoPostTime: autoPostTime ?? "12:00",
     },
-    { upsert: true, new: true, runValidators: true }
+    { upsert: true, returnDocument: 'after', runValidators: true }
   );
 
   return res.json(new ApiResponse(200, { offers: doc }, "Setup saved."));
@@ -61,7 +61,7 @@ const saveSetup = asyncHandler(async (req, res) => {
 // Generates the full 28-day content plan using OpenAI.
 // Creates a ContentPlan document and links it to the business.
 const triggerGenerate = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
+  const userId = req.user.id;
   const business = req.business;
   const businessId = business._id;
 

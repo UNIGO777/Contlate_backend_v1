@@ -111,7 +111,7 @@ async function handleDowngrade(userId) {
   const result = await SeoKeywordCache.findOneAndUpdate(
     { cacheKey, premiumUserCount: { $gt: 0 } },
     { $inc: { premiumUserCount: -1 } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   logger.info("[seoPlanChange] premium downgrade — decremented premiumUserCount", {
