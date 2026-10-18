@@ -7,6 +7,7 @@ const createContent = asyncHandler(async (req, res) => {
     userId: req.user.id,
     businessId: req.business._id.toString(),
     payload: req.validated,
+    plan: req.user.plan,
   });
 
   return res.status(201).json(new ApiResponse(201, { content }, "Content created successfully."));

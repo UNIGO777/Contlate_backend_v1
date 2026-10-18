@@ -33,9 +33,17 @@ const generate = asyncHandler(async (req, res) => {
   // Check usage limits
   const dateKey = new Date().toISOString().split("T")[0];
   const usage = await Usage.findOne({ userId: req.user.id, dateKey }).lean();
-  const limit = PLAN_LIMITS[req.user.plan]?.aiPostersPerDay || 1;
+  const limit = PLAN_LIMITS[req.user.plan]?.aiPostersPerDay ?? 1;
   if (!env.relaxPlanLimits && (usage?.aiPostersCount || 0) >= limit) {
-    throw new ApiError(429, "Daily poster limit reached.", { code: "POSTER_LIMIT_REACHED" });
+    // A plan with no posters at all is a different message from one that has
+    // run out for today.
+    throw new ApiError(
+      429,
+      limit === 0
+        ? "Creating posters on demand is part of the Pro plan."
+        : "You have used today's posters. More tomorrow, or upgrade for a higher limit.",
+      { code: "POSTER_LIMIT_REACHED", details: { limit } }
+    );
   }
 
   // Build a product-focused day plan for the prompt generator

@@ -5,6 +5,7 @@ const { SOCIAL_PLATFORMS } = require("../../constants/socialPlatforms");
 const { SOCIAL_ACCOUNT_STATUS } = require("../../constants/socialAccountStatus");
 const { encrypt } = require("../../core/tokenEncryption");
 const metaService = require("../../services/meta.service");
+const { assertCanConnect } = require("./accountCap");
 const linkedinService = require("../../services/linkedin.service");
 const instagramService = require("../../services/instagram.service");
 const Business = require("../business/business.model");
@@ -811,6 +812,10 @@ const exchangeInstagramOAuth = asyncHandler(async (req, res) => {
   const tokenExpiresAt = longToken.expiresIn
     ? new Date(Date.now() + longToken.expiresIn * 1000)
     : null;
+
+  // One Instagram per account. Checked before the upsert so a second one is
+  // refused rather than silently replacing the first.
+  await assertCanConnect(req.user.id, req.user.plan, SOCIAL_PLATFORMS.INSTAGRAM, profile.userId);
 
   // Upsert: prevents duplicates if same IG account already connected via FB
   const account = await SocialAccount.findOneAndUpdate(

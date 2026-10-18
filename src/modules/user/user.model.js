@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { PLAN_LIMITS } = require("../../constants/limits");
 const { PLANS } = require("../../constants/plans");
 const { ROLES } = require("../../constants/roles");
 
@@ -53,9 +54,11 @@ const userSchema = new mongoose.Schema(
     trialStartAt: { type: Date, default: Date.now },
     trialEndsAt: {
       type: Date,
+      // Was hardcoded to 7 days while PLAN_LIMITS said the trial is 2, so the
+      // constant everyone reads was not the one that ran.
       default: () => {
         const d = new Date();
-        d.setDate(d.getDate() + 7);
+        d.setDate(d.getDate() + (PLAN_LIMITS[PLANS.BASIC]?.trialDays ?? 2));
         return d;
       },
     },

@@ -83,6 +83,14 @@ const startServer = async () => {
 
     const httpServer = app.listen(env.port, () => {
       logger.info(`Server listening on port ${env.port}`);
+      // Whether the testing escape hatch is live is otherwise invisible, and
+      // "did the .env actually load?" is the first question when a cap still
+      // fires after setting it.
+      if (env.relaxPlanLimits) {
+        logger.warn("RELAX_PLAN_LIMITS is ON — all per-plan daily caps are disabled");
+      } else {
+        logger.info("Plan limits enforced (RELAX_PLAN_LIMITS is off)");
+      }
     });
     initSocket(httpServer);
   } catch (error) {

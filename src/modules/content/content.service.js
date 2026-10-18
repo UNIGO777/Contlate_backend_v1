@@ -1,5 +1,8 @@
 const mongoose = require("mongoose");
+const { PLAN_LIMITS } = require("../../constants/limits");
+const env = require("../../config/env");
 const ApiError = require("../../core/ApiError");
+const { ERROR_CODES } = require("../../constants/errorCodes");
 const Content = require("./content.model");
 
 const ensureValidId = (value, label) => {
@@ -33,7 +36,24 @@ const sanitizeContent = (content) => {
   };
 };
 
-const createContent = async ({ userId, businessId, payload }) => {
+const createContent = async ({ userId, businessId, payload, plan }) => {
+  // A stored-item cap, not a daily one: it bounds how much a single account
+  // can accumulate. Published items still count — they are what the library
+  // is made of — so this is a library size limit, not a rate limit.
+  if (!env.relaxPlanLimits) {
+    const cap = PLAN_LIMITS[plan]?.maxContentItems;
+    if (typeof cap === "number") {
+      const held = await Content.countDocuments({ userId });
+      if (held >= cap) {
+        throw new ApiError(
+          403,
+          `Your plan holds up to ${cap} saved posts. Delete a few, or upgrade for more room.`,
+          { code: ERROR_CODES.PLAN_LIMIT_REACHED, details: { cap, held } }
+        );
+      }
+    }
+  }
+
   const content = await Content.create({
     userId,
     businessId,

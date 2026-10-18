@@ -1,6 +1,8 @@
 const express = require("express");
 const multer = require("multer");
 const checkBusiness = require("../../middlewares/checkBusiness.middleware");
+const checkPlan = require("../../middlewares/checkPlan.middleware");
+const { PLANS } = require("../../constants/plans");
 const validateMiddleware = require("../../middlewares/validate.middleware");
 const posterController = require("./poster.controller");
 const {
@@ -36,7 +38,8 @@ router.patch(
 );
 
 // ── Model Image ──
-router.post("/model-image", upload.single("file"), posterController.uploadModelImage);
+// Brand model image is part of customising posters — paid only.
+router.post("/model-image", checkPlan(PLANS.PRO), upload.single("file"), posterController.uploadModelImage);
 router.delete("/model-image", posterController.deleteModelImage);
 
 // ── Content Plan ──
