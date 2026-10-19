@@ -1,4 +1,6 @@
 const ApiResponse = require("../../core/ApiResponse");
+const ApiError = require("../../core/ApiError");
+const { ERROR_CODES } = require("../../constants/errorCodes");
 const asyncHandler = require("../../core/asyncHandler");
 const adminService = require("./admin.service");
 
@@ -99,7 +101,88 @@ const listAdminNotifications = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, { data }, "Notifications fetched."));
 });
 
+// ── Support ─────────────────────────────────────────────────────────────────
+const supportService = require("../support/support.service");
+
+const listTickets = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(50, Number.parseInt(req.query.limit, 10) || 20);
+  const result = await supportService.adminList({
+    status: req.query.status,
+    q: req.query.q,
+    page,
+    limit,
+  });
+  return res.status(200).json(new ApiResponse(200, result, "Tickets fetched."));
+});
+
+const getTicket = asyncHandler(async (req, res) => {
+  const result = await supportService.adminGet(req.params.ticketId);
+  return res.status(200).json(new ApiResponse(200, result, "Ticket fetched."));
+});
+
+const replyToTicket = asyncHandler(async (req, res) => {
+  const message = String(req.body?.message || "").trim();
+  if (!message) {
+    throw new ApiError(400, "message is required.", { code: ERROR_CODES.VALIDATION_FAILED });
+  }
+  const result = await supportService.adminReply(req.params.ticketId, {
+    message: message.slice(0, 4000),
+    resolve: Boolean(req.body?.resolve),
+  });
+  return res.status(200).json(new ApiResponse(200, result, "Reply sent."));
+});
+
+const setTicketStatus = asyncHandler(async (req, res) => {
+  const result = await supportService.adminSetStatus(req.params.ticketId, req.body?.status);
+  return res.status(200).json(new ApiResponse(200, result, "Status updated."));
+});
+
+const listPlans = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(50, Number.parseInt(req.query.limit, 10) || 20);
+  const result = await adminService.listPlans({ page, limit, status: req.query.status });
+  return res.status(200).json(new ApiResponse(200, result, "Plans fetched."));
+});
+
+const listGbpPosts = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(50, Number.parseInt(req.query.limit, 10) || 20);
+  const result = await adminService.listGbpPosts({ page, limit, status: req.query.status });
+  return res.status(200).json(new ApiResponse(200, result, "GBP posts fetched."));
+});
+
+const listSeo = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(50, Number.parseInt(req.query.limit, 10) || 20);
+  const result = await adminService.listSeo({ page, limit });
+  return res.status(200).json(new ApiResponse(200, result, "SEO data fetched."));
+});
+
+const listUserContent = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(48, Number.parseInt(req.query.limit, 10) || 24);
+  const result = await adminService.listUserContent(req.params.userId, { page, limit });
+  return res.status(200).json(new ApiResponse(200, result, "Content fetched."));
+});
+
+const listContent = asyncHandler(async (req, res) => {
+  const page = Number.parseInt(req.query.page, 10) || 1;
+  const limit = Math.min(48, Number.parseInt(req.query.limit, 10) || 24);
+  const result = await adminService.listContent({ page, limit, status: req.query.status });
+  return res.status(200).json(new ApiResponse(200, result, "Content fetched."));
+});
+
 module.exports = {
+  listContent,
+  listUserContent,
+  listSeo,
+  listPlans,
+  listGbpPosts,
+  listTickets,
+  getTicket,
+  replyToTicket,
+  setTicketStatus,
   listUsers,
   getUser,
   suspendUser,

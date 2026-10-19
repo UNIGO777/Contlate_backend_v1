@@ -135,10 +135,57 @@ const getUserDetail = async (userId) => {
     postsTrend.push({ date: key, count: trendMap.get(key) || 0 });
   }
 
+  // Everything the panel needs to answer "what is this account doing, and
+  // what is it paying for" without a second round trip.
+  const Usage = require("../usage/usage.model");
+  const PublishLog = require("../publish/publishLog.model");
+  const Notification = require("../notification/notification.model");
+  const { PLAN_LIMITS } = require("../../constants/limits");
+
+  const [usageRows, publishLogs, notifCount] = await Promise.all([
+    Usage.find({ userId: user._id }).sort({ dateKey: -1 }).limit(14).lean(),
+    PublishLog.find({ userId: user._id })
+      .sort({ executedAt: -1 })
+      .limit(15)
+      .select("platform status errorMessage errorCode externalPostUrl attempt executedAt")
+      .lean(),
+    Notification.countDocuments({ userId: user._id }),
+  ]);
+
+  const today = new Date().toISOString().split("T")[0];
+  const todayUsage = usageRows.find((r) => r.dateKey === today) || {};
+  const limits = PLAN_LIMITS[user.plan] || {};
+
+  // Paired with the plan's own ceiling, so "3 posters" means something.
+  const quota = {
+    aiPosters: { used: todayUsage.aiPostersCount || 0, limit: limits.aiPostersPerDay ?? null },
+    scheduled: { used: todayUsage.scheduledPostsCount || 0, limit: limits.scheduledPostsPerDay ?? null },
+    uploads: { used: todayUsage.uploadsCount || 0, limit: limits.uploadsPerDay ?? null },
+  };
+
   return {
     user: sanitizeUser(user),
     business: business || null,
     subscription: subscription || null,
+    quota,
+    usageHistory: usageRows.map((r) => ({
+      date: r.dateKey,
+      posters: r.aiPostersCount || 0,
+      scheduled: r.scheduledPostsCount || 0,
+      published: r.publishedPostsCount || 0,
+      uploads: r.uploadsCount || 0,
+    })),
+    publishLogs: publishLogs.map((l) => ({
+      id: l._id.toString(),
+      platform: l.platform,
+      status: l.status,
+      error: l.errorMessage || "",
+      errorCode: l.errorCode || "",
+      url: l.externalPostUrl || "",
+      attempt: l.attempt,
+      executedAt: l.executedAt,
+    })),
+    notificationCount: notifCount,
     counts: {
       content: contentCount,
       schedules: scheduleCount,
@@ -673,7 +720,267 @@ const listAdminNotifications = async ({ limit = 50, type } = {}) => {
   return rows;
 };
 
+// ── Content plans ───────────────────────────────────────────────────────────
+// Cross-account view of the 28-day plans: which are running, and where they
+// are stuck. A plan that stopped generating is invisible from the app side —
+// the owner just sees nothing new appear.
+const listPlans = async ({ page = 1, limit = 20, status } = {}) => {
+  const ContentPlan = require("../poster/contentPlan.model");
+
+  const filter = {};
+  if (status) filter.status = status;
+
+  const skip = (page - 1) * limit;
+  const [rows, total] = await Promise.all([
+    ContentPlan.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    ContentPlan.countDocuments(filter),
+  ]);
+
+  const userIds = [...new Set(rows.map((r) => String(r.userId)))];
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select("_id name email plan").lean()
+    : [];
+  const byUser = new Map(users.map((u) => [String(u._id), u]));
+
+  return {
+    data: rows.map((p) => {
+      const days = p.days || [];
+      const count = (st) => days.filter((d) => d.planStatus === st).length;
+      const u = byUser.get(String(p.userId));
+      return {
+        id: p._id.toString(),
+        status: p.status,
+        cycleStartDate: p.cycleStartDate,
+        user: u ? { id: String(u._id), name: u.name, email: u.email, plan: u.plan } : null,
+        dayCount: days.length,
+        posted: count("posted"),
+        ready: count("ready") + count("approved"),
+        pending: count("concept") + count("prompt_ready"),
+        // Days that tried and gave up. This is the number worth watching.
+        failed: days.filter((d) => d.lastError).length,
+        createdAt: p.createdAt,
+      };
+    }),
+    page,
+    limit,
+    total,
+  };
+};
+
+// ── GBP posts ───────────────────────────────────────────────────────────────
+const listGbpPosts = async ({ page = 1, limit = 20, status } = {}) => {
+  const GbpPost = require("../seo/gbpPost.model");
+
+  const filter = {};
+  if (status) filter.status = status;
+
+  const skip = (page - 1) * limit;
+  const [rows, total, counts] = await Promise.all([
+    GbpPost.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    GbpPost.countDocuments(filter),
+    GbpPost.aggregate([{ $group: { _id: "$status", n: { $sum: 1 } } }]),
+  ]);
+
+  const userIds = [...new Set(rows.map((r) => String(r.userId)))];
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select("_id name email").lean()
+    : [];
+  const byUser = new Map(users.map((u) => [String(u._id), u]));
+
+  const byStatus = {};
+  counts.forEach((c) => { byStatus[c._id] = c.n; });
+
+  return {
+    data: rows.map((p) => {
+      const u = byUser.get(String(p.userId));
+      return {
+        id: p._id.toString(),
+        keyword: p.keyword,
+        summary: p.summary,
+        status: p.status,
+        scheduledFor: p.scheduledFor,
+        publishedAt: p.publishedAt,
+        searchUrl: p.googleSearchUrl || "",
+        lastError: p.lastError || "",
+        user: u ? { id: String(u._id), name: u.name, email: u.email } : null,
+        createdAt: p.createdAt,
+      };
+    }),
+    byStatus,
+    page,
+    limit,
+    total,
+  };
+};
+
+// ── Content ─────────────────────────────────────────────────────────────────
+// What was actually built for an account: the posters and captions, not just
+// the counts.
+// Every poster across every account, newest first. The per-user version
+// below is the same shape filtered down, so the panel can reuse one renderer.
+const listContent = async ({ page = 1, limit = 24, status, userId } = {}) => {
+  const filter = {};
+  if (status) filter.status = status;
+  if (userId) filter.userId = userId;
+
+  const skip = (page - 1) * limit;
+  const [rows, total, counts] = await Promise.all([
+    Content.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select("userId imageUrl caption status sourceType socialPostUrls localImageDeleted createdAt")
+      .lean(),
+    Content.countDocuments(filter),
+    Content.aggregate([{ $group: { _id: "$status", n: { $sum: 1 } } }]),
+  ]);
+
+  const userIds = [...new Set(rows.map((r) => String(r.userId)).filter(Boolean))];
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select("_id name email").lean()
+    : [];
+  const byUser = new Map(users.map((u) => [String(u._id), u]));
+
+  const byStatus = {};
+  counts.forEach((c) => { byStatus[c._id] = c.n; });
+
+  return {
+    data: rows.map((c) => {
+      const link = (c.socialPostUrls || []).find((u) => u.mediaUrl || u.postUrl) || {};
+      const u = byUser.get(String(c.userId));
+      return {
+        id: c._id.toString(),
+        imageUrl: c.localImageDeleted ? link.mediaUrl || null : c.imageUrl || null,
+        caption: c.caption || "",
+        status: c.status,
+        source: c.sourceType,
+        postUrl: link.postUrl || "",
+        cleanedUp: !!c.localImageDeleted,
+        user: u ? { id: String(u._id), name: u.name, email: u.email } : null,
+        createdAt: c.createdAt,
+      };
+    }),
+    byStatus,
+    page,
+    limit,
+    total,
+  };
+};
+
+const listUserContent = async (userId, { page = 1, limit = 24 } = {}) => {
+  const skip = (page - 1) * limit;
+  const [rows, total] = await Promise.all([
+    Content.find({ userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select("imageUrl caption status sourceType socialPostUrls localImageDeleted createdAt")
+      .lean(),
+    Content.countDocuments({ userId }),
+  ]);
+
+  return {
+    data: rows.map((c) => {
+      // A published poster is deleted from our disk, so its own URL 404s.
+      // The platform's copy is the only image left.
+      const link = (c.socialPostUrls || []).find((u) => u.mediaUrl || u.postUrl) || {};
+      return {
+        id: c._id.toString(),
+        imageUrl: c.localImageDeleted ? link.mediaUrl || null : c.imageUrl || null,
+        caption: c.caption || "",
+        status: c.status,
+        source: c.sourceType,
+        postUrl: link.postUrl || "",
+        // Worth showing: it explains why an image may be missing.
+        cleanedUp: !!c.localImageDeleted,
+        createdAt: c.createdAt,
+      };
+    }),
+    page,
+    limit,
+    total,
+  };
+};
+
+// ── SEO ─────────────────────────────────────────────────────────────────────
+// The Advanced plan's whole product — keywords, Google insights and reviews —
+// was invisible from the admin side.
+const listSeo = async ({ page = 1, limit = 20 } = {}) => {
+  const AiSeo = require("../ai-seo/aiSeo.model");
+  const GbpInsights = require("../seo/gbpInsights.model");
+  const GbpReviews = require("../seo/gbpReviews.model");
+
+  const skip = (page - 1) * limit;
+  const [rows, total] = await Promise.all([
+    AiSeo.find({}).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    AiSeo.countDocuments({}),
+  ]);
+
+  const businessIds = rows.map((r) => r.businessId).filter(Boolean);
+  const userIds = [...new Set(rows.map((r) => String(r.userId)).filter(Boolean))];
+
+  const [users, insights, reviews] = await Promise.all([
+    userIds.length ? User.find({ _id: { $in: userIds } }).select("_id name email plan").lean() : [],
+    GbpInsights.find({ businessId: { $in: businessIds } }).lean(),
+    GbpReviews.find({ businessId: { $in: businessIds } }).lean(),
+  ]);
+
+  const byUser = new Map(users.map((u) => [String(u._id), u]));
+  const insightBy = new Map(insights.map((i) => [String(i.businessId), i]));
+  const reviewBy = new Map(reviews.map((r) => [String(r.businessId), r]));
+
+  return {
+    data: rows.map((r) => {
+      const u = byUser.get(String(r.userId));
+      const ins = insightBy.get(String(r.businessId));
+      const rev = reviewBy.get(String(r.businessId));
+      const kws = r.keywords || [];
+      return {
+        id: r._id.toString(),
+        user: u ? { id: String(u._id), name: u.name, email: u.email, plan: u.plan } : null,
+        keywordCount: kws.length,
+        keywords: kws.slice(0, 20).map((k) => ({
+          keyword: k.keyword,
+          volume: k.monthlyVolumeRange || "",
+          // Where it sat on each monthly refresh, so movement is visible.
+          month1: k.month1RankRange ?? null,
+          month2: k.month2RankRange ?? null,
+          month3: k.month3RankRange ?? null,
+        })),
+        insights: ins
+          ? {
+              views: ins.views ?? null,
+              viewsMaps: ins.viewsMaps ?? null,
+              viewsSearch: ins.viewsSearch ?? null,
+              directions: ins.directions ?? null,
+              calls: ins.calls ?? null,
+              syncedAt: ins.lastSyncedAt ?? ins.updatedAt,
+            }
+          : null,
+        reviews: rev
+          ? {
+              total: rev.totalReviewCount ?? (rev.reviews || []).length,
+              rating: rev.averageRating ?? null,
+              // The number that matters: how many are still waiting.
+              unanswered: (rev.reviews || []).filter((x) => !x.reply?.comment).length,
+              syncedAt: rev.lastSyncedAt ?? rev.updatedAt,
+            }
+          : null,
+        updatedAt: r.updatedAt,
+      };
+    }),
+    page,
+    limit,
+    total,
+  };
+};
+
 module.exports = {
+  listContent,
+  listUserContent,
+  listSeo,
+  listPlans,
+  listGbpPosts,
   listUsers,
   getUserDetail,
   setUserSuspension,

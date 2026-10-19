@@ -113,14 +113,18 @@ const changePlan = async (userId, { plan, billingCycle }) => {
   if (plan === PLANS.BASIC) {
     subscription.trialEndsAt = user.trialEndsAt || subscription.trialEndsAt;
     subscription.endsAt      = null;
-  } else if (is28d) {
-    subscription.trialEndsAt = null;
-    const ends = new Date();
-    ends.setDate(ends.getDate() + 28);
-    subscription.endsAt = ends;
   } else {
     subscription.trialEndsAt = null;
-    subscription.endsAt      = null;
+
+    // Every paid cycle gets an end date. Monthly and yearly used to be left
+    // null, and the expiry job only matches `endsAt: { $ne: null, $lte: now }`
+    // — so those plans never lapsed. Anyone on monthly had a permanent paid
+    // account after one payment, and the panel had no date to show.
+    const ends = new Date();
+    if (is28d) ends.setDate(ends.getDate() + 28);
+    else if (billingCycle === BILLING_CYCLES.YEARLY) ends.setFullYear(ends.getFullYear() + 1);
+    else ends.setMonth(ends.getMonth() + 1);
+    subscription.endsAt = ends;
   }
 
   await subscription.save();
