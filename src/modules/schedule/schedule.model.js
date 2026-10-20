@@ -79,6 +79,16 @@ const scheduleSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // When retrying stops. Set on the first failure to the end of the client's
+    // calendar day that the post was originally due on, so a post retries all
+    // evening but never goes out stale the next morning — a day-old "today's
+    // offer" is worse for the client than no post at all. Past this, the post
+    // is abandoned and the plan starts a fresh poster for the new day.
+    retryDeadlineAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     // Who put this row here. The autopilot master switch must silence the
     // plan's own auto-scheduled posts without also silencing a post the user
     // scheduled by hand — those are an explicit instruction, not automation.

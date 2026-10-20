@@ -11,9 +11,13 @@ const daySchema = new mongoose.Schema(
 
     // ── Phase 4: combined frontend status ──────────────────────────────────
     // concept → prompt_ready → in_queue → generating → ready → approved/declined → posted
+    // "skipped" is the other terminal state: the post kept failing and its day
+    // ran out, so it was abandoned rather than published late. Stale content
+    // ("today's offer", three days on) is worse for the client than no post,
+    // and the chain starts a fresh poster for the new day instead.
     planStatus: {
       type: String,
-      enum: ["concept", "prompt_ready", "in_queue", "generating", "ready", "approved", "declined", "posted"],
+      enum: ["concept", "prompt_ready", "in_queue", "generating", "ready", "approved", "declined", "posted", "skipped"],
       default: "concept",
     },
 
@@ -52,7 +56,13 @@ const daySchema = new mongoose.Schema(
     declineDeadlineAt: { type: Date, default: null },      // 2 hours before scheduledPostAt
 
     // ── Phase 5: Bull queue ────────────────────────────────────────────────
-    queueToken: { type: Number, default: null },           // position in Bull queue
+    queueToken: { type: Number, default: null },
+    // When the chain queued this day's prompt job. There is a gap between
+    // queueing and the worker flipping the day to "generating", and during it
+    // the day still reads as "concept" — long enough for the hourly stall
+    // check to decide the plan is stuck and queue the very same day again.
+    // This marks the day as spoken for until the worker takes over.
+    chainQueuedAt: { type: Date, default: null },           // position in Bull queue
 
     // ── Phase 6: approve / decline ────────────────────────────────────────
     approvedAt: { type: Date, default: null },

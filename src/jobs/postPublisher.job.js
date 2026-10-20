@@ -12,10 +12,13 @@ const usageService = require("../modules/usage/usage.service");
 const { sendAppNotification } = require("../utils/notifications");
 const JobLog = require("./jobLog.model");
 const User = require("../modules/user/user.model");
+const Business = require("../modules/business/business.model");
+const planChain = require("../services/planChain.service");
+const adminAlerts = require("../services/adminAlerts.service");
+const { endOfDayInTz } = require("../utils/timezone");
 
 const JOB_TYPE = "postPublisher";
 const DEFAULT_INTERVAL_MS = 60 * 1000; // every minute
-const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 25;
 // Reset schedules that have been "processing" for longer than this (crash recovery).
 const STALE_LOCK_MS = 10 * 60 * 1000;
@@ -56,8 +59,27 @@ const claimNext = async (now, excludeIds = []) => {
   );
 };
 
+// 30s, 1m, 2m, 4m, 8m, 16m, 32m, then every hour. Fast at the start so a
+// network blip recovers immediately, then settling into hourly so a longer
+// outage is not hammered. There is no attempt limit any more — retrying stops
+// when the day runs out (retryDeadlineAt), not after a fixed count. The old
+// MAX_ATTEMPTS of 5 gave up after roughly seven and a half minutes in total,
+// which meant the hour cap below was unreachable dead code.
 const computeBackoffMs = (attempts) =>
   Math.min(60 * 60 * 1000, 30 * 1000 * 2 ** Math.max(0, attempts - 1));
+
+/**
+ * The instant this post stops being worth publishing: the end of the client's
+ * calendar day it was due on. Computed once, on the first failure, while
+ * scheduledAt still holds the original time — every retry afterwards pushes
+ * scheduledAt forward, so it cannot be re-derived later.
+ */
+const resolveRetryDeadline = async (schedule) => {
+  if (schedule.retryDeadlineAt) return schedule.retryDeadlineAt;
+  const business = await Business.findById(schedule.businessId).select("timezone").lean();
+  const tz = business?.timezone || schedule.timezone || "UTC";
+  return endOfDayInTz(new Date(schedule.scheduledAt), tz);
+};
 
 // Classify Meta Graph API errors — prefer structured fields from graphFetch,
 // fall back to parsing the error message for legacy error paths.
@@ -145,6 +167,26 @@ const markFailed = async (schedule, err, account) => {
       reason: "Your post could not be published due to a content policy violation or invalid media.",
     });
 
+    // Nobody is watching this one. The client cannot fix a media/policy
+    // rejection — it came out of our generator — so it needs us, hourly,
+    // until someone looks at it.
+    adminAlerts
+      .raise({
+        key: adminAlerts.publishFailureKey(schedule._id),
+        type: "publish_permanent_failure",
+        title: `Publish rejected by ${account?.platform || "platform"}`,
+        message: schedule.lastError,
+        userId: schedule.userId,
+        businessId: schedule.businessId,
+        scheduleId: schedule._id,
+        meta: { errorCode, contentId: String(schedule.contentId || "") },
+      })
+      .catch(() => {});
+
+    // No retry will help, so the day is spent — start the next poster rather
+    // than leaving the client with a hole in their schedule.
+    await skipPlanDayAndAdvance(schedule, "permanent publish failure");
+
     logger.warn("[postPublisher] permanent failure", {
       scheduleId: schedule._id.toString(),
       errorCode,
@@ -200,15 +242,25 @@ const markFailed = async (schedule, err, account) => {
     return;
   }
 
-  // ── RETRYABLE: temporary issue, retry with backoff ──
-  const isTerminal = schedule.publishAttempts >= MAX_ATTEMPTS;
+  // ── RETRYABLE: temporary issue, retry until the day runs out ──
+  // The deadline is the end of the client's calendar day this post was due
+  // on. Within it we retry indefinitely; past it the post is abandoned by the
+  // expiry sweep in runOnce, which starts a fresh poster for the new day.
+  if (!schedule.retryDeadlineAt) {
+    schedule.retryDeadlineAt = await resolveRetryDeadline(schedule);
+  }
+
+  const nextAttemptAt = new Date(Date.now() + computeBackoffMs(schedule.publishAttempts));
+  const isTerminal = nextAttemptAt >= schedule.retryDeadlineAt;
+
   if (isTerminal) {
-    schedule.status = SCHEDULE_STATUS.FAILED;
+    // The next attempt would land after the day is over, so there is no point
+    // waiting for it — abandon now and let the chain move on.
+    schedule.status = SCHEDULE_STATUS.CANCELLED;
+    schedule.lastError = `${schedule.lastError} (abandoned — retry window for the day expired)`.slice(0, 500);
   } else {
     schedule.status = SCHEDULE_STATUS.PENDING;
-    schedule.scheduledAt = new Date(
-      Date.now() + computeBackoffMs(schedule.publishAttempts)
-    );
+    schedule.scheduledAt = nextAttemptAt;
   }
   await schedule.save();
 
@@ -234,12 +286,59 @@ const markFailed = async (schedule, err, account) => {
     }).catch(() => {});
   }
 
-  // Notify user only on terminal failure (all retries exhausted)
-  if (isTerminal) {
+  // Tell the client on the first failure, not only once we have given up.
+  // Waiting meant they heard nothing while anything could still be done, and
+  // then got one mail after the fact.
+  if (schedule.publishAttempts === 1 || isTerminal) {
     notifyUser(schedule.userId, "SCHEDULE_FAILED", {
       platform: account?.platform || "unknown",
       accountName: account?.accountName || "",
       error: schedule.lastError,
+      reason: isTerminal
+        ? "This post was missed. A fresh poster is being prepared for the next slot."
+        : "We hit a temporary problem and are retrying automatically.",
+    });
+  }
+
+  if (isTerminal) {
+    await skipPlanDayAndAdvance(schedule, "retry window expired");
+  }
+};
+
+/**
+ * Give up on this post's plan day and start the next one.
+ *
+ * Marking the day "skipped" rather than leaving it pending is what keeps the
+ * cadence: the client still gets a poster that day, it is just a new one
+ * written for the new day instead of yesterday's resurfacing late.
+ */
+const skipPlanDayAndAdvance = async (schedule, reason) => {
+  try {
+    const plan = await planChain.planForContent(schedule.contentId);
+    if (!plan) return;
+
+    const day = plan.days.find(
+      (d) => d.contentId && d.contentId.toString() === String(schedule.contentId)
+    );
+    // Another account may have published the same content successfully —
+    // never downgrade a posted day to skipped.
+    if (!day || day.planStatus === "posted" || day.posted) return;
+
+    await ContentPlan.updateOne(
+      { _id: plan._id, "days.dayNumber": day.dayNumber },
+      { $set: { "days.$.planStatus": "skipped", "days.$.lastError": reason } }
+    );
+
+    notifyUser(schedule.userId, "GENERAL", {
+      title: "A post was missed",
+      body: "We could not publish today's post, so we are preparing a fresh one for the next slot.",
+    });
+
+    await planChain.advanceChain({ planId: plan._id, reason });
+  } catch (err) {
+    logger.warn("[postPublisher] skip/advance failed", {
+      scheduleId: String(schedule._id),
+      message: err.message,
     });
   }
 };
@@ -309,9 +408,13 @@ const processOne = async (schedule) => {
   }
 
   // ── Mark the ContentPlan day as posted ─────────────────────────────────
+  // The same content goes out to every connected account — one Instagram and
+  // one Facebook — so this runs twice for one poster. The planStatus guard
+  // makes the first publish the only one that flips the day, which is what
+  // stops the chain advancing twice and burning two days of plan in one go.
   const now = new Date();
   const planUpdate = await ContentPlan.findOneAndUpdate(
-    { "days.contentId": content._id },
+    { days: { $elemMatch: { contentId: content._id, planStatus: { $ne: "posted" } } } },
     {
       $set: {
         "days.$.planStatus": "posted",
@@ -322,19 +425,32 @@ const processOne = async (schedule) => {
     { returnDocument: 'after' }
   );
 
-  if (planUpdate) {
-    const day = planUpdate.days.find(
+  // A null update means either "not part of a plan" or "the other account got
+  // here first". Those need different handling, so look again before deciding.
+  const isFirstPublish = Boolean(planUpdate);
+  const plan = planUpdate || (await ContentPlan.findOne({ "days.contentId": content._id }));
+
+  if (plan) {
+    const day = plan.days.find(
       (d) => d.contentId && d.contentId.toString() === content._id.toString()
     );
 
     // Emit socket event so frontend updates in real-time
-    _emitDayPosted(planUpdate.businessId, day?.dayNumber, content.imageUrl || "");
+    _emitDayPosted(plan.businessId, day?.dayNumber, content.imageUrl || "");
 
     // Notify user: post is live
     sendAppNotification(schedule.userId, "POSTER_POSTED", {
       dayNumber: day?.dayNumber,
       platform: account.platform,
     });
+
+    if (isFirstPublish) {
+      // Clear any alert we raised about this post, then start the next one.
+      adminAlerts.resolve(adminAlerts.publishFailureKey(schedule._id), "published").catch(() => {});
+      planChain
+        .advanceChain({ planId: plan._id, reason: `day ${day?.dayNumber} published` })
+        .catch((e) => logger.warn("[postPublisher] chain advance failed", { message: e.message }));
+    }
   } else {
     // Scheduled post outside a content plan — send generic publish success
     sendAppNotification(schedule.userId, "PUBLISH_SUCCESS", {
@@ -423,9 +539,54 @@ const sendScheduleReminders = async (now) => {
   }
 };
 
+/**
+ * Abandon posts whose day has ended.
+ *
+ * markFailed catches the common case as it retries, but two kinds of row can
+ * sit past their deadline without ever running through it again: a paused one
+ * waiting on a reconnect that never came, and a pending one left behind by a
+ * restart. Sweeping here means a stale post cannot reappear the next morning
+ * however it got stuck.
+ */
+const expireStaleSchedules = async (now) => {
+  const stale = await Schedule.find({
+    status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PAUSED] },
+    retryDeadlineAt: { $ne: null, $lte: now },
+  })
+    .limit(BATCH_SIZE)
+    .lean();
+
+  for (const row of stale) {
+    await Schedule.updateOne(
+      { _id: row._id, status: { $in: [SCHEDULE_STATUS.PENDING, SCHEDULE_STATUS.PAUSED] } },
+      {
+        $set: {
+          status: SCHEDULE_STATUS.CANCELLED,
+          lockedAt: null,
+          lastError: `${row.lastError || "Not published"} (abandoned — retry window for the day expired)`.slice(0, 500),
+        },
+      }
+    );
+    await skipPlanDayAndAdvance(row, "retry window expired");
+  }
+
+  if (stale.length) {
+    logger.info("[postPublisher] abandoned posts past their day", { count: stale.length });
+  }
+};
+
 const runOnce = async () => {
   const now = new Date();
   await releaseStaleLocks(now);
+  await expireStaleSchedules(now).catch((e) =>
+    logger.warn("[postPublisher] expiry sweep failed", { message: e.message })
+  );
+
+  // Hourly nag for anything only we can fix. Cheap — it is a single indexed
+  // query on the ticks where nothing is due.
+  adminAlerts.sweep(now).catch((e) =>
+    logger.warn("[postPublisher] admin alert sweep failed", { message: e.message })
+  );
 
   // Send 30-minute reminders (non-blocking — errors don't abort publish loop)
   sendScheduleReminders(now).catch((e) =>

@@ -9,6 +9,7 @@ const { SCHEDULE_STATUS } = require("../../constants/scheduleStatus");
 const { generatePlanConcepts, buildDayDocuments } = require("../../services/planGeneration.service");
 const { getQueues } = require("../../queues/queues");
 const logger = require("../../core/logger");
+const planChain = require("../../services/planChain.service");
 
 // ── GET /plan/setup ──────────────────────────────────────────────────────────
 // Returns existing BusinessOffers (if any) and the business's current service
@@ -239,6 +240,13 @@ const declineDay = asyncHandler(async (req, res) => {
       { $set: { status: SCHEDULE_STATUS.CANCELLED } }
     );
   }
+
+  // Declining is the other way a day resolves without ever publishing, so it
+  // has to move the chain on too. Without this the plan would stop dead the
+  // first time a client said no to a poster.
+  planChain
+    .advanceChain({ planId: plan._id, reason: `day ${dayNum} declined` })
+    .catch((err) => logger.warn("[plan] chain advance after decline failed", { message: err.message }));
 
   return res.json(new ApiResponse(200, null, "Day declined."));
 });

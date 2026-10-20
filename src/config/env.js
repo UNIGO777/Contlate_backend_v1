@@ -204,6 +204,12 @@ const env = {
     privacyUrl: process.env.MAIL_PRIVACY_URL || "",
     termsUrl: process.env.MAIL_TERMS_URL || "",
     supportEmail: process.env.MAIL_SUPPORT_EMAIL || "",
+    // Where operational alerts go — failures only we can fix, re-sent hourly
+    // until someone resolves them. Comma-separated for more than one address.
+    // Falls back to supportEmail so a missing variable does not silently
+    // swallow every alert.
+    alertEmail: process.env.ADMIN_ALERT_EMAIL || process.env.MAIL_SUPPORT_EMAIL || "",
+    alertMaxEmails: toInt(process.env.ADMIN_ALERT_MAX_EMAILS, 48),
     // List-Unsubscribe target; Gmail weighs its presence heavily.
     unsubscribeUrl: process.env.MAIL_UNSUBSCRIBE_URL || "",
     smtp: {
