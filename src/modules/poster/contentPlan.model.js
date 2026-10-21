@@ -62,7 +62,10 @@ const daySchema = new mongoose.Schema(
     // the day still reads as "concept" — long enough for the hourly stall
     // check to decide the plan is stuck and queue the very same day again.
     // This marks the day as spoken for until the worker takes over.
-    chainQueuedAt: { type: Date, default: null },           // position in Bull queue
+    chainQueuedAt: { type: Date, default: null },
+    // The product this day promotes, when it promotes one. Its photo is fed
+    // to the image model so the poster shows the real thing.
+    productId: { type: mongoose.Schema.Types.ObjectId, default: null },           // position in Bull queue
 
     // ── Phase 6: approve / decline ────────────────────────────────────────
     approvedAt: { type: Date, default: null },

@@ -342,27 +342,66 @@ const generatePosterImage = async (
   prompt,
   textFields,
   business,
-  { size = "4:5", quality, modelImageBuffer = null } = {}
+  {
+    size = "4:5",
+    quality,
+    modelImageBuffer = null,
+    productImageBuffer = null,
+    includeModel = false,
+  } = {}
 ) => {
   const effort = env.openai.imageEffort || quality || "low";
   const sizeMeta = SIZE_MAP[size] || SIZE_MAP["4:5"];
   const apiSize = sizeMeta.apiSize;
-  const finalPrompt = buildFinalPrompt(prompt, textFields, business, size);
+  let finalPrompt = buildFinalPrompt(prompt, textFields, business, size);
+
+  // image[] takes more than one reference, so a poster can carry both the
+  // business's model and the actual product. Two unlabelled images would be
+  // ambiguous to the model, so the prompt says which is which — without this
+  // it tends to treat the product shot as a second person or as scenery.
+  const references = [];
+  if (modelImageBuffer) references.push({ buffer: modelImageBuffer, name: "model.png" });
+  if (productImageBuffer) references.push({ buffer: productImageBuffer, name: "product.png" });
+
+  // Wanting a person on the poster is separate from having a photo of one.
+  // With a photo we reproduce that face; without one the image model is told
+  // to invent someone suitable, rather than leaving the poster empty of
+  // people — which is what used to happen and reads as lifeless for most
+  // local businesses.
+  if (includeModel && !modelImageBuffer) {
+    finalPrompt +=
+      "\n\n👤 PEOPLE: Feature a realistic human model in this poster — someone who" +
+      " plausibly fits this business and its customers in age, dress and setting." +
+      " They must look natural and professional, be clearly part of the scene rather" +
+      " than pasted on, and must never cover or obscure any of the required text.";
+  }
+
+  if (references.length) {
+    finalPrompt += "\n\n📎 REFERENCE IMAGES (in the order attached):";
+    if (modelImageBuffer) {
+      finalPrompt +=
+        "\n- model.png — the person who must appear in this poster. Keep their face and" +
+        " likeness recognisable; do not substitute a different person.";
+    }
+    if (productImageBuffer) {
+      finalPrompt +=
+        "\n- product.png — the actual product being promoted. Show THIS product, matching" +
+        " its real shape, colour and details. Do not invent a different product.";
+    }
+  }
 
   let data;
 
-  if (modelImageBuffer) {
+  if (references.length) {
     const formData = new globalThis.FormData();
     formData.append("model", "gpt-image-2");
     formData.append("prompt", finalPrompt);
     formData.append("n", "1");
     formData.append("size", apiSize);
     formData.append("quality", effort);
-    formData.append(
-      "image[]",
-      new Blob([modelImageBuffer], { type: "image/png" }),
-      "model.png"
-    );
+    for (const ref of references) {
+      formData.append("image[]", new Blob([ref.buffer], { type: "image/png" }), ref.name);
+    }
     const res = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
       headers: { Authorization: `Bearer ${env.openai.apiKey}` },
@@ -488,6 +527,8 @@ module.exports = {
   savePosterLocally,
   deleteLocalPoster,
   readModelImageBuffer,
+  // Same reader, named for what it actually does now that products use it too.
+  readImageBuffer: readModelImageBuffer,
   getWelcomeTemplate,
   formatAddress,
   formatContact,

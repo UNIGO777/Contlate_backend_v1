@@ -112,7 +112,14 @@ const businessSchema = new mongoose.Schema(
     posterSettings: {
       modelImagePath: { type: String, default: "" },
       modelImageUrl: { type: String, default: "" },
+      // Use the client's OWN uploaded face as a reference image.
       useModelImage: { type: Boolean, default: false },
+      // Whether posters should feature a person at all. Independent of the
+      // upload: with a photo we reproduce that face, without one the image
+      // model is told to invent a suitable person. Previously a client with
+      // no photo got posters with no people in them, which for most local
+      // businesses looks lifeless.
+      includeModel: { type: Boolean, default: false },
       activeTheme: {
         name: { type: String, trim: true, default: "" },
         colors: { type: [String], default: [] },

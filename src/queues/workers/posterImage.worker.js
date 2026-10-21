@@ -6,6 +6,8 @@ const Business = require("../../modules/business/business.model");
 const Content = require("../../modules/content/content.model");
 const ContentPlan = require("../../modules/poster/contentPlan.model");
 const Usage = require("../../modules/usage/usage.model");
+const BusinessOffers = require("../../modules/plan/businessOffers.model");
+const { resolveOwnedUpload } = require("../../utils/safePath");
 const posterService = require("../../services/poster.service");
 const { sendAppNotification } = require("../../utils/notifications");
 
@@ -70,6 +72,27 @@ const start = () => {
           );
         }
 
+        // ── Read this day's product photo, if it is about a product ────
+        // Without it the image model invents a product from the text alone,
+        // which is the wrong item on a poster meant to sell a real one.
+        let productImageBuffer = null;
+        if (day.productId) {
+          const offers = await BusinessOffers.findOne({ businessId: plan.businessId })
+            .select("products")
+            .lean();
+          const product = offers?.products?.find(
+            (p) => String(p._id) === String(day.productId)
+          );
+          // Guarded again at read time, not just on save: rows written
+          // before the check existed are still in the database.
+          const safe = resolveOwnedUpload(product?.imagePath, "product-images", plan.businessId);
+          if (safe) {
+            productImageBuffer = await posterService
+              .readModelImageBuffer(safe)
+              .catch(() => null);
+          }
+        }
+
         const sizeKey = business.posterSettings?.defaultSize || "4:5";
         const quality  = business.posterSettings?.defaultQuality || "auto";
 
@@ -83,7 +106,13 @@ const start = () => {
             cta:      day.promptText?.cta      || "",
           },
           business,
-          { size: sizeKey, quality, modelImageBuffer }
+          {
+            size: sizeKey,
+            quality,
+            modelImageBuffer,
+            productImageBuffer,
+            includeModel: business.posterSettings?.includeModel === true,
+          }
         );
 
         // ── Save locally and derive public URL ─────────────────────────

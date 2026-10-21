@@ -10,6 +10,7 @@ const Usage = require("../usage/usage.model");
 const env = require("../../config/env");
 const posterService = require("../../services/poster.service");
 const { PLAN_LIMITS } = require("../../constants/limits");
+const { resolveOwnedUpload } = require("../../utils/safePath");
 
 // ── POST /product-poster/generate ──
 const generate = asyncHandler(async (req, res) => {
@@ -24,6 +25,7 @@ const generate = asyncHandler(async (req, res) => {
     style,
     size,
     quality,
+    productImagePath,
   } = req.body;
 
   if (!productName || !productName.trim()) {
@@ -79,14 +81,23 @@ const generate = asyncHandler(async (req, res) => {
     throw err;
   }
 
-  // Read product image if uploaded
+  // ── Reference images ────────────────────────────────────────────────────
+  // The upload endpoint below has always existed, but what it returned was
+  // never read back here — every poster fell through to the model image and
+  // the product the client had photographed was ignored. Both are passed now.
   let modelImageBuffer = null;
-  // Product images are handled via the product-image upload endpoint
-  // For now, use model image if configured
   if (business.posterSettings?.useModelImage && business.posterSettings?.modelImagePath) {
     modelImageBuffer = await posterService.readModelImageBuffer(
       business.posterSettings.modelImagePath
     );
+  }
+
+  // The path came from our own upload response, but it travelled through the
+  // client to get here, so it is checked rather than trusted.
+  let productImageBuffer = null;
+  const safeProductPath = resolveOwnedUpload(productImagePath, "product-images", business._id);
+  if (safeProductPath) {
+    productImageBuffer = await posterService.readModelImageBuffer(safeProductPath).catch(() => null);
   }
 
   const sizeKey = size || business.posterSettings?.defaultSize || "4:5";
@@ -102,7 +113,13 @@ const generate = asyncHandler(async (req, res) => {
       cta: promptResult.cta,
     },
     business,
-    { size: sizeKey, quality: qualityKey, modelImageBuffer }
+    {
+      size: sizeKey,
+      quality: qualityKey,
+      modelImageBuffer,
+      productImageBuffer,
+      includeModel: business.posterSettings?.includeModel === true,
+    }
   );
 
   // Save locally

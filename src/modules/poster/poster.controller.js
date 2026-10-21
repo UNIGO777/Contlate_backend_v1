@@ -37,6 +37,7 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (data.defaultLanguage) update["posterSettings.defaultLanguage"] = data.defaultLanguage;
   if (data.defaultStyle) update["posterSettings.defaultStyle"] = data.defaultStyle;
   if (data.useModelImage !== undefined) update["posterSettings.useModelImage"] = data.useModelImage;
+  if (data.includeModel !== undefined) update["posterSettings.includeModel"] = data.includeModel;
 
   await Business.updateOne({ _id: business._id }, { $set: update });
 

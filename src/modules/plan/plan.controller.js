@@ -1,3 +1,5 @@
+const fs = require("fs/promises");
+const path = require("path");
 const asyncHandler = require("../../core/asyncHandler");
 const ApiResponse = require("../../core/ApiResponse");
 const ApiError = require("../../core/ApiError");
@@ -10,6 +12,8 @@ const { generatePlanConcepts, buildDayDocuments } = require("../../services/plan
 const { getQueues } = require("../../queues/queues");
 const logger = require("../../core/logger");
 const planChain = require("../../services/planChain.service");
+const env = require("../../config/env");
+const { resolveOwnedUpload } = require("../../utils/safePath");
 
 // ── GET /plan/setup ──────────────────────────────────────────────────────────
 // Returns existing BusinessOffers (if any) and the business's current service
@@ -42,21 +46,84 @@ const saveSetup = asyncHandler(async (req, res) => {
     throw new ApiError(400, "autoPostTime must be in HH:MM format (e.g. '12:00')");
   }
 
+  // imagePath makes a round trip through the client between upload and save,
+  // so it cannot be trusted on the way back in — the poster worker later reads
+  // whatever is stored here and sends the bytes to OpenAI. Anything that does
+  // not resolve inside this business's own upload folder is dropped.
+  const safeProducts = (businessType === "product" ? products ?? [] : []).map((p) => ({
+    ...p,
+    imagePath: resolveOwnedUpload(p?.imagePath, "product-images", businessId) || "",
+    imageUrl: resolveOwnedUpload(p?.imagePath, "product-images", businessId) ? p.imageUrl || "" : "",
+  }));
+
   const doc = await BusinessOffers.findOneAndUpdate(
     { userId },
     {
       userId,
       businessId,
       businessType,
-      products: businessType === "product" ? (products ?? []) : [],
+      products: safeProducts,
       services: businessType === "service" ? (services ?? []) : [],
       autoPostTime: autoPostTime ?? "12:00",
     },
     { upsert: true, returnDocument: 'after', runValidators: true }
   );
 
+  // Any product image that no longer belongs to a saved product is now
+  // orphaned on disk. Uploading happens before saving, so a client who picks
+  // a photo and then deletes the product would otherwise leave the file
+  // behind for ever.
+  cleanupOrphanedProductImages(businessId, doc.products).catch((err) =>
+    logger.warn("[plan] product image cleanup failed", { message: err.message })
+  );
+
   return res.json(new ApiResponse(200, { offers: doc }, "Setup saved."));
 });
+
+// ── POST /plan/product-image ─────────────────────────────────────────────────
+// Stores the file and hands back its path + url. The caller puts those on the
+// product and saves it with POST /plan/setup — the image is not attached to a
+// product here, because a product being added for the first time has no id.
+const uploadProductImage = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new ApiError(400, "No image file provided.");
+  }
+
+  const business = req.business;
+  const dir = path.resolve(env.storageLocalDir, "product-images", String(business._id));
+  await fs.mkdir(dir, { recursive: true });
+
+  const ext =
+    req.file.mimetype === "image/png" ? "png" : req.file.mimetype === "image/webp" ? "webp" : "jpg";
+  const filename = `product_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const filePath = path.join(dir, filename);
+  await fs.writeFile(filePath, req.file.buffer);
+
+  const imageUrl = `${env.storagePublicBaseUrl}/files/product-images/${business._id}/${filename}`;
+
+  return res.json(
+    new ApiResponse(200, { imagePath: filePath, imageUrl }, "Product image uploaded.")
+  );
+});
+
+/**
+ * Delete product image files that no product points at any more.
+ * Only ever touches this business's own product-images directory.
+ */
+const cleanupOrphanedProductImages = async (businessId, products) => {
+  const dir = path.resolve(env.storageLocalDir, "product-images", String(businessId));
+  const files = await fs.readdir(dir).catch(() => []);
+  if (!files.length) return;
+
+  const keep = new Set(
+    (products || []).map((p) => p.imagePath && path.basename(p.imagePath)).filter(Boolean)
+  );
+
+  for (const file of files) {
+    if (keep.has(file)) continue;
+    await fs.unlink(path.join(dir, file)).catch(() => {});
+  }
+};
 
 // ── POST /plan/generate ──────────────────────────────────────────────────────
 // Generates the full 28-day content plan using OpenAI.
@@ -98,7 +165,7 @@ const triggerGenerate = asyncHandler(async (req, res) => {
 
   // Build day documents with scheduling
   const autoPostTime = offers.autoPostTime || "12:00";
-  const days = buildDayDocuments(concepts, cycleStartDate, autoPostTime);
+  const days = buildDayDocuments(concepts, cycleStartDate, autoPostTime, offers.products);
 
   // Persist plan
   const plan = await ContentPlan.create({
@@ -286,4 +353,13 @@ const updateCaption = asyncHandler(async (req, res) => {
   return res.json(new ApiResponse(200, null, "Caption updated."));
 });
 
-module.exports = { getSetup, saveSetup, triggerGenerate, getActivePlan, approveDay, declineDay, updateCaption };
+module.exports = {
+  getSetup,
+  saveSetup,
+  uploadProductImage,
+  triggerGenerate,
+  getActivePlan,
+  approveDay,
+  declineDay,
+  updateCaption,
+};

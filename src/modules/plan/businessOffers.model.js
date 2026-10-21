@@ -16,6 +16,13 @@ const productSchema = new mongoose.Schema(
     description: { type: String, trim: true, default: "" },
     price: { type: Number, min: 0, default: null },
     offer: { type: offerSchema, default: null },
+    // A photo of the actual product. Passed to the image model as a reference
+    // alongside the business's model photo, so the poster shows what the
+    // client really sells rather than an AI's idea of it.
+    // imagePath is on disk (for reading the bytes); imageUrl is what the app
+    // renders.
+    imagePath: { type: String, default: "" },
+    imageUrl: { type: String, default: "" },
   },
   { _id: true }
 );

@@ -40,11 +40,17 @@ STRICT RULES (never break these):
    - Day on Diwali → "Diwali Celebration" — festive offer or greeting tied to the business.
    Only use real, widely celebrated occasions for that country. Do NOT force occasions where there are none.
 
+8. For a product business, set "product" to the EXACT name of the product that
+   post is about, copied letter-for-letter from the Products list. Its photo is
+   put in front of the image model, so a name that does not match the list
+   means the poster shows a made-up product instead of the real one. Use "" for
+   posts that are not about one specific product (greetings, tips, about-us).
+
 JSON format (Days 3–28):
 [
-  { "day": 3, "date": "YYYY-MM-DD", "title": "...", "description": "..." },
+  { "day": 3, "date": "YYYY-MM-DD", "title": "...", "description": "...", "product": "" },
   ...
-  { "day": 28, "date": "YYYY-MM-DD", "title": "...", "description": "..." }
+  { "day": 28, "date": "YYYY-MM-DD", "title": "...", "description": "...", "product": "" }
 ]`;
 
 // ── Build user prompt from business data ──────────────────────────────────────
@@ -139,6 +145,7 @@ function parseAIConcepts(raw) {
       day: item.day,
       title: String(item.title).trim().slice(0, 80),
       description: String(item.description).trim().slice(0, 400),
+      product: item.product ? String(item.product).trim().slice(0, 120) : "",
     }))
     .filter((item) => item.day >= 3 && item.day <= 28)
     .sort((a, b) => a.day - b.day)
@@ -246,10 +253,29 @@ async function generatePlanConcepts(business, offers, cycleStartDate, country) {
  * @param {string}   autoPostTime     - "HH:MM" (24-hour), user's chosen post time
  * @returns {object[]} - 28 day sub-documents ready for ContentPlan
  */
-function buildDayDocuments(concepts, cycleStartDate, autoPostTime) {
+function buildDayDocuments(concepts, cycleStartDate, autoPostTime, products = []) {
   const [postHour, postMin] = autoPostTime.split(":").map(Number);
 
-  return concepts.map(({ day, title, description }) => {
+  // The AI is asked to copy product names exactly, but it paraphrases often
+  // enough that an exact match alone would drop most of the links. Compare
+  // loosely, and fall back to a containment check for "Blue Cotton Shirt"
+  // coming back as "Blue Cotton Shirts".
+  const norm = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const index = (products || [])
+    .filter((p) => p?.name)
+    .map((p) => ({ id: p._id, key: norm(p.name) }))
+    .filter((p) => p.key);
+
+  const matchProduct = (name) => {
+    const key = norm(name);
+    if (!key) return null;
+    const exact = index.find((p) => p.key === key);
+    if (exact) return exact.id;
+    const partial = index.find((p) => p.key.includes(key) || key.includes(p.key));
+    return partial ? partial.id : null;
+  };
+
+  return concepts.map(({ day, title, description, product }) => {
     // Image generates at midnight of (cycleStartDate + day days)
     // e.g. Day 1 generates at midnight of day 1 of the cycle
     const generationDay = new Date(cycleStartDate);
@@ -276,6 +302,9 @@ function buildDayDocuments(concepts, cycleStartDate, autoPostTime) {
       scheduledGenerationAt: generationDay,
       scheduledPostAt: postDay,
       declineDeadlineAt: declineDeadline,
+      // Which product this day is about, so the image model gets that
+      // product's real photo as a reference instead of inventing one.
+      productId: matchProduct(product),
     };
   });
 }

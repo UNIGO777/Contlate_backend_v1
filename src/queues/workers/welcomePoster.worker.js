@@ -58,7 +58,12 @@ const start = () => {
           cta: promptResult.cta,
         },
         business,
-        { size: sizeKey, quality, modelImageBuffer }
+        {
+          size: sizeKey,
+          quality,
+          modelImageBuffer,
+          includeModel: business.posterSettings?.includeModel === true,
+        }
       );
 
       // Save locally

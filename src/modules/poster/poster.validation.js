@@ -72,6 +72,9 @@ const validateUpdateSettings = (req) => {
     }
   }
 
+  if (body.includeModel !== undefined) {
+    value.includeModel = Boolean(body.includeModel);
+  }
   if (body.useModelImage !== undefined) {
     value.useModelImage = Boolean(body.useModelImage);
   }
