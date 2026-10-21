@@ -55,6 +55,20 @@ const subscriptionSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Which renewal reminders have already gone out for the CURRENT cycle,
+    // as day-offsets before endsAt (3, 1, 0). Without this the daily job
+    // would re-send the same reminder every run, and a client three days from
+    // expiry would get the same email three times.
+    //
+    // Cleared whenever endsAt moves, so the next cycle reminds again.
+    remindersSent: {
+      type: [Number],
+      default: [],
+    },
+    remindersForEndsAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

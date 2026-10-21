@@ -57,11 +57,21 @@ const TEMPLATES = {
     title: "Your 28-day plan is ready",
     body: "AI created your full content plan. Tap to explore all 28 days.",
   }),
-  RENEWAL_REMINDER: () => ({
-    notifType: "plan_day_ready",
-    title: "Time to update your offers",
-    body: "Your plan renews soon. Want to add new offers this month?",
-  }),
+  // This existed but nothing ever sent it, so no client was ever told their
+  // plan was about to lapse — they found out when the posts stopped.
+  RENEWAL_REMINDER: ({ planName, daysLeft, autoRenews, price }) => {
+    const when = daysLeft <= 0 ? "today" : daysLeft === 1 ? "tomorrow" : `in ${daysLeft} days`;
+    return {
+      notifType: "renewal_reminder",
+      title: autoRenews
+        ? `${planName || "Your plan"} renews ${when}`
+        : `${planName || "Your plan"} ends ${when}`,
+      body: autoRenews
+        ? `${price ? `₹${price} will be charged. ` : ""}Tap to review your plan or update your offers.`
+        : "Renew to keep your daily posts going out.",
+      emailTemplate: "renewal_reminder",
+    };
+  },
   SOCIAL_ACCOUNT_EXPIRED: ({ platform, accountName, reason }) => ({
     notifType: "account_expired",
     title: "Social account disconnected",

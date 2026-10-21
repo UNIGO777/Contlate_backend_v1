@@ -417,6 +417,97 @@ const permissionsRevoked = ({ name, platform, accountName }) => {
   return { subject, preheader, html: wrap({ preheader, inner }), text };
 };
 
+// ── Renewal reminder ────────────────────────────────────────────────────────
+/**
+ * One template covers every plan and both billing shapes, because the facts
+ * differ but the message does not: here is what you have, here is when it
+ * stops, here is the one thing to do about it.
+ *
+ * The split that matters is auto-renew vs one-off. Telling a monthly
+ * subscriber to "buy again" is wrong — they are about to be charged
+ * automatically and may want to cancel. Telling a one-off buyer their plan
+ * "renews" is worse: they would expect it to continue, and it stops dead.
+ *
+ * @param {object} p
+ * @param {string} p.name           client's name
+ * @param {string} p.planName       "Pro" | "Advanced"
+ * @param {number} p.daysLeft       3, 1 or 0
+ * @param {string} p.endsOn         formatted date
+ * @param {boolean} p.autoRenews    true for monthly/yearly
+ * @param {number} [p.price]        next charge, for auto-renew
+ * @param {string} [p.cycleLabel]   "month" | "year"
+ */
+const renewalReminder = ({
+  name,
+  planName = "your plan",
+  daysLeft = 3,
+  endsOn = "",
+  autoRenews = false,
+  price,
+  cycleLabel = "month",
+}) => {
+  const when =
+    daysLeft <= 0 ? "today" : daysLeft === 1 ? "tomorrow" : `in ${daysLeft} days`;
+
+  const subject = autoRenews
+    ? `Your ${planName} plan renews ${when}`
+    : daysLeft <= 0
+      ? `Your ${planName} plan ends today`
+      : `Your ${planName} plan ends ${when}`;
+
+  const preheader = autoRenews
+    ? `${planName} renews ${when}${price ? ` — ₹${price}` : ""}. Nothing to do unless you want changes.`
+    : `${planName} ends ${when}. Renew to keep your posts going out.`;
+
+  const headline = autoRenews ? "Renewing" : "Ending";
+
+  const body = autoRenews
+    ? `Hi ${escape(name || "there")}, your <strong>${escape(planName)}</strong> plan renews ${when}${
+        endsOn ? ` (${escape(endsOn)})` : ""
+      }${price ? `, and ₹${price} will be charged for the next ${escape(cycleLabel)}` : ""}. Your posts keep going out as usual — there is nothing you need to do.`
+    : `Hi ${escape(name || "there")}, your <strong>${escape(planName)}</strong> plan ends ${when}${
+        endsOn ? ` (${escape(endsOn)})` : ""
+      }. After that your daily posts stop and your account goes back to the free plan.`;
+
+  // What they would actually lose is more persuasive than what they would buy.
+  const noteBody = autoRenews
+    ? "Want to change plan or update your offers before the next cycle? Now is the time — this month's content is written from what is in your account."
+    : "Your scheduled posts stop going out, daily posters are no longer generated, and Google Business Profile posting pauses.";
+
+  const inner = `
+    ${headingBlock(headline, `${escape(planName)}.`)}
+    <p style="margin:0 0 18px;font-family:${FONT_SANS};font-size:15px;line-height:1.6;color:${C.ink2};">
+      ${body}
+    </p>
+
+    ${noteBlock({
+      tone: autoRenews ? "neutral" : "warning",
+      label: autoRenews ? "Before it renews" : "What stops",
+      body: noteBody,
+    })}
+
+    ${buttonBlock({
+      href: BRAND.site,
+      label: autoRenews ? "Manage my plan" : "Renew my plan",
+    })}
+  `;
+
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    autoRenews
+      ? `Your ${planName} plan renews ${when}${endsOn ? ` (${endsOn})` : ""}${price ? `. ₹${price} will be charged for the next ${cycleLabel}.` : "."}`
+      : `Your ${planName} plan ends ${when}${endsOn ? ` (${endsOn})` : ""}. After that your daily posts stop.`,
+    ``,
+    noteBody,
+    ``,
+    `${openAppLine()}`,
+    signoff(),
+  ].join("\n");
+
+  return { subject, preheader, html: wrap({ preheader, inner }), text };
+};
+
 const TEMPLATES = {
   verify_email:         verifyEmail,
   password_reset:       passwordReset,
@@ -424,6 +515,7 @@ const TEMPLATES = {
   account_expired:      accountExpired,
   account_disconnected: accountDisconnected,
   permissions_revoked:  permissionsRevoked,
+  renewal_reminder:     renewalReminder,
 };
 
 const render = (templateName, data = {}) => {

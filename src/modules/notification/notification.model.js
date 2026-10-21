@@ -24,6 +24,7 @@ const notificationSchema = new mongoose.Schema(
         "schedule_reminder",
         "schedule_failed",
         "review_replied",
+        "renewal_reminder",
       ],
       required: true,
     },
