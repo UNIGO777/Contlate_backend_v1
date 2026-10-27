@@ -28,8 +28,36 @@ const start = () => {
         content.socialPostUrls = socialPostUrls;
       }
 
-      // Delete local file
+      // Archive a thumbnail, then delete the full-size file.
+      //
+      // Deleting without this left content.imageUrl pointing at a file that
+      // no longer existed, so every published poster 404'd in the app a day
+      // after it went out. Instagram's CDN copy was the fallback, but those
+      // URLs are signed and expire, so published posts ended up with no
+      // image at all.
       if (content.localImagePath && !content.localImageDeleted) {
+        try {
+          const thumb = await posterService.archivePosterThumbnail(
+            content.localImagePath,
+            content.businessId
+          );
+          if (thumb) {
+            content.thumbnailUrl = thumb.publicUrl;
+            content.thumbnailPath = thumb.localPath;
+            // Point the app at something that will still be there tomorrow.
+            content.imageUrl = thumb.publicUrl;
+          }
+        } catch (err) {
+          // A failed thumbnail must not cost us the disk saving, but it must
+          // also not silently destroy the only visible copy — so the original
+          // is kept and cleanup retries on the next pass.
+          logger.warn("[posterCleanup.worker] thumbnail failed, keeping original", {
+            contentId,
+            message: err.message,
+          });
+          return { cleaned: false, reason: "thumbnail_failed" };
+        }
+
         await posterService.deleteLocalPoster(content.localImagePath);
         content.localImageDeleted = true;
       }
@@ -45,6 +73,9 @@ const start = () => {
               "days.$.posted": true,
               "days.$.postedAt": new Date(),
               "days.$.socialPostUrls": socialPostUrls || [],
+              // The plan day renders from its own copy of the url, so it has
+              // to follow the content to the thumbnail or it keeps 404ing.
+              ...(content.thumbnailUrl ? { "days.$.imageUrl": content.thumbnailUrl } : {}),
             },
           }
         );

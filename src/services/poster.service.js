@@ -463,6 +463,58 @@ const savePosterLocally = async (imageBuffer, businessId, dayIdentifier) => {
 };
 
 // ────────────────────────────────────────────────────
+// 4b. ARCHIVE A POSTER AS A THUMBNAIL
+// ────────────────────────────────────────────────────
+
+/**
+ * Keep a small, permanent copy of a poster before the full-size file is
+ * deleted.
+ *
+ * Posters used to simply vanish from the app 24 hours after publishing: the
+ * cleanup job removed the local file but left content.imageUrl pointing at
+ * it, so every published post 404'd. The intended fallback was Instagram's
+ * CDN copy, but those URLs are signed and expire within days, so that broke
+ * too — leaving published posts with no image at all.
+ *
+ * A 600px JPEG is roughly 3% of the original PNG, which keeps the disk saving
+ * that cleanup exists for while giving the app something durable to show.
+ * The full-resolution original remains on Instagram, reachable via postUrl.
+ *
+ * @returns {Promise<{localPath: string, publicUrl: string}|null>} null if the
+ *          source file is already gone, which is not an error — it just means
+ *          there is nothing left to archive.
+ */
+const archivePosterThumbnail = async (localPath, businessId) => {
+  if (!localPath) return null;
+
+  let source;
+  try {
+    source = await fs.readFile(localPath);
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+
+  const dir = path.resolve(env.storageLocalDir, "thumbs", String(businessId));
+  await fs.mkdir(dir, { recursive: true });
+
+  const filename = `${path.basename(localPath, path.extname(localPath))}_thumb.jpg`;
+  const filePath = path.join(dir, filename);
+
+  const buf = await sharp(source)
+    .resize(600, 600, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82 })
+    .toBuffer();
+
+  await fs.writeFile(filePath, buf);
+
+  return {
+    localPath: filePath,
+    publicUrl: `${env.storagePublicBaseUrl}/files/thumbs/${businessId}/${filename}`,
+  };
+};
+
+// ────────────────────────────────────────────────────
 // 5. DELETE LOCAL POSTER
 // ────────────────────────────────────────────────────
 
@@ -525,6 +577,7 @@ module.exports = {
   generatePosterImage,
   buildFinalPrompt,
   savePosterLocally,
+  archivePosterThumbnail,
   deleteLocalPoster,
   readModelImageBuffer,
   // Same reader, named for what it actually does now that products use it too.

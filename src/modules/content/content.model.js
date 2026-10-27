@@ -64,6 +64,12 @@ const contentSchema = new mongoose.Schema(
     ],
     localImagePath: { type: String, default: "" },
     localImageDeleted: { type: Boolean, default: false },
+    // A small permanent copy, written just before the full-size poster is
+    // deleted. imageUrl is repointed here at that moment, so the app keeps
+    // showing the post instead of a dead link. Kept as separate fields so it
+    // is still obvious afterwards which posts are showing the archived copy.
+    thumbnailUrl: { type: String, default: "" },
+    thumbnailPath: { type: String, default: "" },
   },
   {
     timestamps: true,
