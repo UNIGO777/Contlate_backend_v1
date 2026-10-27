@@ -6,6 +6,7 @@ const { CONTENT_STATUS } = require("../../constants/contentStatus");
 const { SOCIAL_ACCOUNT_STATUS } = require("../../constants/socialAccountStatus");
 const { applyStagger } = require("../../utils/scheduleStagger");
 const { getLimits } = require("../../constants/publishingLimits");
+const { displayImageUrl } = require("../../utils/displayImage");
 const Content = require("../content/content.model");
 const SocialAccount = require("../social/social.model");
 const Schedule = require("./schedule.model");
@@ -292,7 +293,7 @@ const list = async (userId, { page = 1, limit = 20, status, from, to } = {}) => 
 
   const [contents, accounts] = await Promise.all([
     Content.find({ _id: { $in: contentIds } })
-      .select("caption imageUrl socialPostUrls localImageDeleted")
+      .select("caption imageUrl socialPostUrls localImageDeleted thumbnailUrl")
       .lean(),
     SocialAccount.find({ _id: { $in: accountIds } })
       .select("platform accountName profilePictureUrl")
@@ -307,10 +308,10 @@ const list = async (userId, { page = 1, limit = 20, status, from, to } = {}) => 
     const c = contentById.get(base.contentId);
     const a = accountById.get(base.socialAccountId);
 
-    // Once a poster is cleaned up its own URL 404s, so prefer the platform's
-    // copy — same rule the welcome posters follow.
+    // Once a poster is cleaned up its own URL 404s — utils/displayImage picks
+    // what to show instead.
     const link = (c?.socialPostUrls || []).find((u) => u.mediaUrl || u.postUrl) || {};
-    const imageUrl = c?.localImageDeleted ? link.mediaUrl || null : c?.imageUrl || null;
+    const imageUrl = displayImageUrl(c);
 
     return {
       ...base,

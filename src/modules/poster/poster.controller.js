@@ -7,6 +7,7 @@ const { ERROR_CODES } = require("../../constants/errorCodes");
 const Business = require("../business/business.model");
 const ContentPlan = require("./contentPlan.model");
 const env = require("../../config/env");
+const { displayImageUrl } = require("../../utils/displayImage");
 const { getQueues } = require("../../queues/queues");
 
 // ── GET /poster/settings ──
@@ -310,7 +311,7 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
     const empty = { posted: false, at: null, postUrl: "", mediaUrl: "" };
     if (!contentId) return empty;
     const content = await Content.findById(contentId)
-      .select("status socialPostUrls localImageDeleted")
+      .select("status socialPostUrls localImageDeleted thumbnailUrl imageUrl")
       .lean();
     if (content?.status !== CONTENT_STATUS.PUBLISHED) return empty;
     const row = await Schedule.findOne({ contentId, status: SCHEDULE_STATUS.PUBLISHED })
@@ -346,13 +347,10 @@ const getWelcomeStatus = asyncHandler(async (req, res) => {
   const imageFor = async (contentId) => {
     if (!contentId) return { imageUrl: null, caption: null };
     const content = await Content.findById(contentId)
-      .select("imageUrl caption socialPostUrls localImageDeleted")
+      .select("imageUrl caption socialPostUrls localImageDeleted thumbnailUrl")
       .lean();
     if (!content) return { imageUrl: null, caption: null };
-    const link = (content.socialPostUrls || []).find((u) => u.mediaUrl) || {};
-    const imageUrl = content.localImageDeleted
-      ? link.mediaUrl || null
-      : normaliseUrl(content.imageUrl);
+    const imageUrl = displayImageUrl(content, normaliseUrl);
     return { imageUrl, caption: content.caption || null };
   };
 
