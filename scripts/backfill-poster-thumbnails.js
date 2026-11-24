@@ -49,11 +49,18 @@ const freshMediaUrl = async (content) => {
   const post = (content.socialPostUrls || []).find((s) => s.postId);
   if (!post) return null;
 
+  // Deliberately not filtered on status: "connected". That status is our own
+  // bookkeeping and goes stale — an account marked expired may still hold a
+  // working token, and refusing to try turns a recoverable post into
+  // "no usable image source" without ever asking Instagram. If the token
+  // really is dead the call below fails and says so, which is the more
+  // useful outcome.
   const account = await SocialAccount.findOne({
     businessId: content.businessId,
     platform: "instagram",
-    status: "connected",
-  }).lean();
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
   if (!account?.accessToken) return null;
 
   try {

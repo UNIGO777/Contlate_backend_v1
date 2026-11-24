@@ -186,12 +186,21 @@ const env = {
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
   },
 
+  // PhonePe Standard Checkout (v2). The old salt-key/X-VERIFY scheme is gone —
+  // PhonePe now issues OAuth2 client credentials from the Business Dashboard
+  // under Developer Settings → API Keys.
   phonepe: {
-    merchantId:    process.env.PHONEPE_MERCHANT_ID || "",
-    saltKey:       process.env.PHONEPE_SALT_KEY || "",
-    saltKeyIndex:  toInt(process.env.PHONEPE_SALT_KEY_INDEX, 1),
-    // Set PHONEPE_ENV=production to hit live endpoints; any other value uses sandbox
+    clientId:      process.env.PHONEPE_CLIENT_ID || "",
+    clientSecret:  process.env.PHONEPE_CLIENT_SECRET || "",
+    // Dashboard shows this next to the key; it is 1 for most merchants.
+    clientVersion: toInt(process.env.PHONEPE_CLIENT_VERSION, 1),
+    // Set PHONEPE_ENV=production to hit live endpoints; anything else is sandbox.
     env:           process.env.PHONEPE_ENV || "sandbox",
+    // Separate credentials, chosen by you when registering the callback URL in
+    // the dashboard. PhonePe signs webhooks with SHA256("username:password"),
+    // so these are NOT the API client credentials above.
+    webhookUsername: process.env.PHONEPE_WEBHOOK_USERNAME || "",
+    webhookPassword: process.env.PHONEPE_WEBHOOK_PASSWORD || "",
   },
 
   mail: {

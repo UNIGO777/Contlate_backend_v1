@@ -151,10 +151,19 @@ const refreshLongLivedToken = async (validLongLivedToken) => {
       status: res.status,
       error: data.error?.message || JSON.stringify(data),
     });
-    throw new ApiError(
+    const err = new ApiError(
       400,
       data.error?.message || "Failed to refresh Instagram token."
     );
+    // The caller has to tell "this token is dead" apart from "Instagram was
+    // briefly unreachable", and it cannot do that from the message alone —
+    // every message from this endpoint mentions a token. Say it outright.
+    // 190 is an invalid token; anything 5xx or a transport failure is not.
+    const code = data.error?.code;
+    err.metaCode = code ? String(code) : "";
+    err.statusCode = res.status;
+    err.isAuthError = code === 190 || code === 102 || res.status === 401;
+    throw err;
   }
   return {
     accessToken: data.access_token,

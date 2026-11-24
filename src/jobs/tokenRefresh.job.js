@@ -280,8 +280,25 @@ const runOnce = async () => {
         message: err.message,
       });
 
-      // Mark as expired if refresh itself fails (token likely revoked)
-      const isAuthError = /invalid|expired|revoked|token|190|102/i.test(err.message);
+      // Only a genuine auth failure means the connection is dead.
+      //
+      // This used to decide by matching the message against
+      // /invalid|expired|revoked|token|190|102/i. Every message from a token
+      // endpoint contains the word "token", so a network timeout or a 500
+      // read as "revoked" and the account was marked expired while its token
+      // was still perfectly good. autoSchedulePosters only builds schedules
+      // for connected accounts, so posting then stopped silently — no error,
+      // no failed post, just nothing going out.
+      //
+      // graphFetch and the Instagram refresh path both set isAuthError and
+      // metaCode now, so ask them rather than reading tea leaves. A 5xx or a
+      // transport error falls through and is retried on the next run.
+      const isAuthError =
+        err.isAuthError === true ||
+        err.metaCode === "190" ||
+        err.metaCode === "102" ||
+        err.statusCode === 401;
+
       if (isAuthError) {
         await SocialAccount.findByIdAndUpdate(account._id, {
           $set: {

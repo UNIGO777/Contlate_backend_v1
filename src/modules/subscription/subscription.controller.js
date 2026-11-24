@@ -39,7 +39,17 @@ const createCheckout = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, result, "Checkout session created."));
 });
 
+// Called when the user returns from the PhonePe page.
+const verifyCheckout = asyncHandler(async (req, res) => {
+  const result = await subscriptionService.verifyCheckout(
+    req.user.id,
+    req.params.merchantOrderId
+  );
+  return res.status(200).json(new ApiResponse(200, result, "Checkout verified."));
+});
+
 module.exports = {
+  verifyCheckout,
   getMySubscription,
   updateMyPlan,
   cancelMySubscription,
