@@ -4,3 +4,6 @@ npm-debug.log*
 .env
 
 
+
+# Env backups — these carry live secrets and must never be committed.
+.env.bak*

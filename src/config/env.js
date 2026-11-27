@@ -118,8 +118,20 @@ const env = {
   // So it is ignored in production entirely. Leaving the variable readable in
   // development keeps local testing convenient; setting it on the live server
   // no longer does anything, and says so in the boot log.
+  // Two independent conditions switch it off, because relying on NODE_ENV
+  // alone was not safe: the live server may not have it set to "production",
+  // and a bypass that depends on one unverified variable is not a guard.
+  //
+  //   1. Production — never, regardless of how the flag is set.
+  //   2. A configured payment gateway — if users CAN pay, there is no reason
+  //      for a path that hands out plans for free. This is the condition that
+  //      actually matters, since it holds whatever NODE_ENV says.
+  //
+  // phonepe is declared further down this object, so the env vars are read
+  // directly rather than referencing it.
   allowDirectPlanChange:
-    process.env.NODE_ENV === "production"
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.PHONEPE_CLIENT_ID && process.env.PHONEPE_CLIENT_SECRET)
       ? false
       : toBool(process.env.ALLOW_DIRECT_PLAN_CHANGE, false),
 
