@@ -95,6 +95,20 @@ const startServer = async () => {
       } else {
         logger.info("Plan limits enforced (RELAX_PLAN_LIMITS is off)");
       }
+
+      // Whether a plan can be taken without paying is the single most
+      // expensive setting here, so it is always stated at boot.
+      if (env.allowDirectPlanChange) {
+        logger.warn(
+          "ALLOW_DIRECT_PLAN_CHANGE is ON — users can give themselves a paid plan with NO payment"
+        );
+      } else if (env.directPlanChangeRequested) {
+        logger.warn(
+          "ALLOW_DIRECT_PLAN_CHANGE is set but IGNORED in production — plan changes go through checkout"
+        );
+      } else {
+        logger.info("Paid plans require checkout (ALLOW_DIRECT_PLAN_CHANGE is off)");
+      }
     });
     initSocket(httpServer);
   } catch (error) {

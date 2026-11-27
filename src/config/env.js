@@ -108,10 +108,24 @@ const env = {
   // keeps a free account from running up a real OpenAI bill.
   relaxPlanLimits: toBool(process.env.RELAX_PLAN_LIMITS, false),
 
-  // Lets a user switch their own plan with no payment. This exists so paid
-  // features can be exercised before the gateway is wired up; with it on,
-  // anyone with an account can give themselves Advanced for free.
-  allowDirectPlanChange: toBool(process.env.ALLOW_DIRECT_PLAN_CHANGE, false),
+  // Lets a user switch their own plan with no payment. It existed so paid
+  // features could be exercised before the gateway was wired up.
+  //
+  // PhonePe is wired up now, which makes this a liability: with it on, anyone
+  // with an account gives themselves Advanced for free, and it is a single
+  // env var away from being on in production — which is exactly what happened.
+  //
+  // So it is ignored in production entirely. Leaving the variable readable in
+  // development keeps local testing convenient; setting it on the live server
+  // no longer does anything, and says so in the boot log.
+  allowDirectPlanChange:
+    process.env.NODE_ENV === "production"
+      ? false
+      : toBool(process.env.ALLOW_DIRECT_PLAN_CHANGE, false),
+
+  // Kept separate so the server can warn about a setting that is being
+  // deliberately ignored, rather than silently disagreeing with the .env.
+  directPlanChangeRequested: toBool(process.env.ALLOW_DIRECT_PLAN_CHANGE, false),
 
   schedule: {
     // Kept so an existing .env keeps working; RELAX_PLAN_LIMITS covers it too.
